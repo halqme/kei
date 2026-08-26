@@ -20,8 +20,8 @@ If you want to extend `kei`:
 
 If you want to change `kei` itself:
 
-- [Architecture](architecture.md) — what belongs in the harness and what should stay outside it.
-- [Development](development.md) — package map, test strategy, verification, and common cross-cutting changes.
+- [Architecture](./architecture.md) — what belongs in the harness and what should stay outside it.
+- [Development](./development.md) — package map, test strategy, verification, and common cross-cutting changes.
 - [`AGENTS.md`](../AGENTS.md) — concise repository workflow for coding agents.
 
 ## Vocabulary

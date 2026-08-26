@@ -180,7 +180,7 @@ After defaults are applied, the input object is JSON-encoded and written to stdi
 
 In both cases the child process itself runs with the session workspace as cwd.
 
-See [Extensions](index.md) for the full resolution rule.
+See [Extensions](./index.md) for the full resolution rule.
 
 ## Timeouts and cancellation
 
