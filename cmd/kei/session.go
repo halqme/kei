@@ -11,7 +11,9 @@ import (
 	"github.com/halqme/kei/internal/config"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/extension"
+	"github.com/halqme/kei/internal/instruction"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/skill"
 )
 
 func loadConfig(path string) (config.Config, error) { return config.Load(path) }
@@ -40,12 +42,21 @@ func makeSession(cfg config.Config, r *extension.Registry, id, workdir, provider
 	if err := requireProviderAuth(context.Background(), pCfg); err != nil {
 		return nil, err
 	}
+	skills, err := skill.Discover(skill.SearchRoots(workdir))
+	if err != nil {
+		return nil, err
+	}
+	systemPrompt, err := instruction.Load(workdir, skills.CatalogPrompt())
+	if err != nil {
+		return nil, err
+	}
 	return &agent.Session{
 		ID:           id,
 		Tools:        r.Tools,
 		Commands:     r.Commands,
+		Skills:       skills,
 		Controls:     control.New(cfg.Controls),
-		SystemPrompt: cfg.SystemPrompt,
+		SystemPrompt: systemPrompt,
 		Workdir:      workdir,
 		Provider:     prov,
 	}, nil

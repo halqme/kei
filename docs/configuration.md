@@ -1,6 +1,6 @@
 # Configuration
 
-`kei` separates ordinary connection/runtime configuration from authentication credentials.
+`kei` separates ordinary connection/runtime configuration from authentication credentials and natural-language agent instructions.
 
 Normal configuration is JSON and is suitable for dotfiles or workspace-local settings as long as secrets are kept out of it.
 
@@ -26,8 +26,7 @@ The current top-level shape is:
   "providers": [],
   "models": {},
   "extension_dirs": [],
-  "controls": [],
-  "system_prompt": "..."
+  "controls": []
 }
 ```
 
@@ -141,17 +140,13 @@ Each control receives JSON on stdin and returns a decision as JSON on stdout. Co
 
 Unlike tools/commands, controls are **not yet extension declarations**. The docs live under `extension/` because controls participate in extensibility, but the current schema belongs to `config.json`.
 
-### `system_prompt`
+## Agent instructions are files
 
-`system_prompt` sets the initial session system prompt.
+Natural-language agent instructions are not stored in `config.json`. A session reads `<workspace>/AGENTS.md` and composes it with kei's small built-in base prompt and the metadata catalog for discovered Agent Skills.
 
-The default is:
+Keeping instructions out of configuration avoids a second prompt-setting surface with separate precedence rules. See [Sessions](session.md) for the runtime composition and Skill discovery behavior.
 
-```text
-You are a coding agent. Use tools when they help you complete the task.
-```
-
-A `before_model` control can replace the active system prompt for subsequent model calls.
+A `before_model` control can still replace the assembled system prompt for a model call. That is a runtime policy seam rather than persistent instruction configuration.
 
 ## Authentication is separate
 
@@ -197,8 +192,8 @@ Read-only inspection should not become a hidden configuration mutation merely to
     "fast": "gpt-5.5-mini"
   },
   "extension_dirs": ["./examples/extensions"],
-  "system_prompt": "You are a coding agent. Prefer small, verifiable changes."
+  "controls": []
 }
 ```
 
-Keep secrets out of this file; use `kei login` or environment variables instead.
+Keep secrets out of this file; use `kei login` or environment variables instead. Put project-specific agent instructions in `AGENTS.md`.

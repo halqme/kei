@@ -13,7 +13,9 @@ internal/command      slash-command descriptors and execution
 internal/config       configuration schema and persistence
 internal/control      external control process chain
 internal/extension    extension discovery and namespacing
+internal/instruction  workspace AGENTS.md and system instruction composition
 internal/provider     provider interface and transports
+internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, and execution
 examples               example configuration and extension declarations
 docs                   public design and reference documentation
@@ -61,6 +63,10 @@ Tests should live as close as practical to the contract they prove.
 
 For extension discovery, test roots, precedence, whole-extension shadowing, stable ordering, hidden directories, descriptor parsing, and qualified names.
 
+For Agent Skills, test the project/user root precedence, required `SKILL.md` metadata contract, progressive-disclosure catalog, and confinement of referenced resource reads to the Skill root.
+
+For workspace instructions, test root `AGENTS.md` composition and the absent-file case. Nested instruction scoping is not part of the current contract.
+
 For tools, test schema defaults, required/optional placeholders, array expansion, stdin JSON, timeout behavior, PATH lookup, extension-relative executables, workspace cwd, stderr, and non-zero exits as relevant to the change.
 
 For slash commands, test invocation parsing separately from process execution. Unknown slash-prefixed text is session behavior and should remain a prompt when no discovered command matches.
@@ -106,7 +112,7 @@ Do not infer streaming guarantees from one provider implementation. The provider
 
 ### Workspace changes
 
-Workspace/cwd behavior crosses extension search roots, process working directories, CLI session creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
+Workspace/cwd behavior crosses extension search roots, root `AGENTS.md`, project Skill discovery, process working directories, CLI session creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
 
 ### Naming changes
 
@@ -117,7 +123,7 @@ Tool and command names appear in extension loading, registries, model-facing con
 Update docs with behavior changes, not as a cleanup after the code has already diverged.
 
 - `docs/configuration.md` owns config/auth-facing contracts.
-- `docs/session.md` owns orchestration semantics.
+- `docs/session.md` owns orchestration, workspace instructions, and Agent Skills semantics.
 - `docs/extension/*` owns declarations/discovery/execution contracts.
 - `docs/acp.md` owns ACP behavior.
 - `docs/architecture.md` owns rationale and core-versus-external boundaries.

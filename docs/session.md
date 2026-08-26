@@ -1,6 +1,6 @@
 # Sessions
 
-A `kei` session is the provider-independent orchestration layer between a frontend, a model provider, discovered capabilities, and controls.
+A `kei` session is the provider-independent orchestration layer between a frontend, a model provider, discovered capabilities, workspace instructions, Agent Skills, and controls.
 
 The central type is `internal/agent.Session`.
 
@@ -12,8 +12,9 @@ A session currently carries:
 - one selected provider implementation
 - the discovered tool registry
 - the discovered slash-command registry
+- the discovered Agent Skill registry
 - an optional control chain
-- the system prompt
+- the assembled system prompt
 - the workspace directory
 - conversation messages
 - an optional approval callback
@@ -21,14 +22,44 @@ A session currently carries:
 
 The session owns conversation history. Frontends do not maintain a separate model transcript and provider transports do not own orchestration policy.
 
+## Instructions
+
+Session startup assembles one system prompt from:
+
+1. kei's small built-in coding-agent prompt;
+2. the name and description of each discovered Agent Skill;
+3. `<workspace>/AGENTS.md`, when present.
+
+`AGENTS.md` is read from the workspace root. Nested `AGENTS.md` scoping is not part of the current contract.
+
+Natural-language instructions are intentionally not a `config.json` field. Project instructions therefore have one filesystem surface rather than competing with a `system_prompt` setting.
+
+## Agent Skills
+
+`kei` follows the Agent Skills `SKILL.md` format rather than defining a kei-specific Skill descriptor. The current search roots, in precedence order, are:
+
+1. `<workspace>/.agents/skills`
+2. `~/.agents/skills`
+
+Each immediate non-hidden child directory is a Skill candidate. A candidate without `SKILL.md` is skipped. Required `name` and `description` metadata are validated during discovery, and the Skill name must match its parent directory. When both roots contain the same Skill name, the workspace copy wins.
+
+Only Skill names and descriptions are placed in the initial system prompt. This preserves the progressive-disclosure model of Agent Skills. When a task matches a Skill, the model can call the built-in `load_skill` tool to read its complete `SKILL.md`, then `read_skill_resource` for referenced files under that Skill directory as needed.
+
+Those built-in readers are read-only and reject resource paths that escape the Skill root. They participate in the same tool lifecycle events and control checks as extension tools.
+
+The format and directory conventions are documented by the Agent Skills project:
+
+- <https://agentskills.io/specification>
+- <https://agentskills.io/client-implementation/adding-skills-support>
+
 ## Prompt path
 
 For ordinary user text, the session:
 
-1. appends the system message on the first model turn when a system prompt exists;
+1. appends the assembled system message on the first model turn;
 2. appends the user message;
 3. applies `before_model` controls;
-4. determines the visible tool set;
+4. determines the visible extension and Skill-loader tool set;
 5. calls `Provider.Stream`;
 6. appends the provider's completed assistant message;
 7. returns text if there are no tool calls;
@@ -48,17 +79,17 @@ If it does not exist, the original text continues through the normal prompt path
 
 ## Tool-call path
 
-For each provider tool call:
+For each provider tool call, whether it resolves to an extension tool or a built-in Skill reader, the session:
 
-1. resolve the provider-facing tool name through the tool registry;
-2. decode the function arguments as a JSON object;
-3. emit a `tool_start` event;
-4. apply `before_tool` controls;
-5. deny, request approval, or continue according to the control decision;
-6. execute the tool process;
-7. emit `tool_end`;
-8. append a tool-result message using the provider tool-call ID;
-9. invoke `after_tool` controls.
+1. resolves the provider-facing tool name;
+2. decodes the function arguments as a JSON object;
+3. emits a `tool_start` event;
+4. applies `before_tool` controls;
+5. denies, requests approval, or continues according to the control decision;
+6. executes the operation;
+7. emits `tool_end`;
+8. appends a tool-result message using the provider tool-call ID;
+9. invokes `after_tool` controls.
 
 Tool execution errors do not automatically terminate the whole session. The error is converted into tool-result text prefixed with `ERROR:` and returned to the model, allowing the model to react on the next turn.
 
@@ -68,17 +99,17 @@ By contrast, failures in provider calls, control execution, malformed tool argum
 
 ### `before_model`
 
-A control receives the session ID, current system prompt, and workdir. It may:
+A control receives the session ID, current assembled system prompt, and workdir. It may:
 
 - replace the system prompt;
 - hide tools from the next provider call;
 - return an action, although model-level action handling is currently limited compared with tool-level handling.
 
-Hidden tools are filtered from the provider-facing tool list for that turn. Qualified names such as `unix.search_text` are also matched against their model-facing underscore representation.
+Hidden tools are filtered from the provider-facing tool list for that turn. Qualified extension names such as `unix.search_text` are also matched against their model-facing underscore representation. Built-in Skill reader names can be hidden directly.
 
 ### `before_tool`
 
-The event contains the qualified tool name, declared `effects`, decoded input, session ID, and workdir.
+The event contains the canonical tool name, declared `effects` when applicable, decoded input, session ID, and workdir.
 
 `deny` appends a denied tool result and continues the agent loop.
 
@@ -132,11 +163,12 @@ Payloads are plain maps/values owned by the session layer. Frontends such as ACP
 
 ## Workspace semantics
 
-`Session.Workdir` serves two related purposes:
+`Session.Workdir` serves several related purposes:
 
+- it selects the root `AGENTS.md` and project `.agents/skills` directory;
 - it is the cwd of tool and slash-command child processes;
 - it is included in control events and used by control child processes as cwd.
 
 Extension-owned relative executable paths are resolved earlier relative to the extension root; that does not change the child cwd. See [Extensions](extension/index.md) for the distinction.
 
-ACP sessions discover workspace-local extensions from each session cwd, so discovery is session/workspace scoped rather than one global registry shared by all ACP sessions.
+ACP sessions discover workspace-local extensions, instructions, and Skills from each session cwd, so these inputs are session/workspace scoped rather than one global registry shared by all ACP sessions.

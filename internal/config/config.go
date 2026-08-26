@@ -35,14 +35,9 @@ type Config struct {
 	// workspace and standard XDG data locations.
 	ExtensionDirs []string  `json:"extension_dirs,omitempty"`
 	Controls      []Control `json:"controls,omitempty"`
-	SystemPrompt  string    `json:"system_prompt,omitempty"`
 }
 
-func Default() Config {
-	return Config{
-		SystemPrompt: "You are a coding agent. Use tools when they help you complete the task.",
-	}
-}
+func Default() Config { return Config{} }
 
 // ResolveProvider returns the selected connection target and model override.
 func (c *Config) ResolveProvider(providerName, modelOverride string) (Provider, error) {
@@ -138,9 +133,6 @@ func LoadOrCreate(path string, defaults Config) (Config, error) {
 	}
 	if path != "" {
 		return Config{}, fmt.Errorf("config %s was not found", path)
-	}
-	if defaults.SystemPrompt == "" {
-		defaults.SystemPrompt = Default().SystemPrompt
 	}
 	path, err = DefaultConfigPath()
 	if err != nil {

@@ -35,6 +35,5 @@
     "smart": "claude-3-7-sonnet-20250219"
   },
   "extension_dirs": ["./examples/extensions"],
-  "controls": [],
-  "system_prompt": "You are a coding agent. Inspect the workspace and use available tools when useful."
+  "controls": []
 }

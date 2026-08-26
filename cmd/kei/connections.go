@@ -23,10 +23,7 @@ func availableProviderConfigs(ctx context.Context) []config.Provider {
 
 func loadSessionConfig(path string) (config.Config, error) {
 	available := availableProviderConfigs(context.Background())
-	cfg, err := config.LoadOrCreate(path, config.Config{
-		Providers:    available,
-		SystemPrompt: config.Default().SystemPrompt,
-	})
+	cfg, err := config.LoadOrCreate(path, config.Config{Providers: available})
 	if err != nil {
 		return config.Config{}, err
 	}

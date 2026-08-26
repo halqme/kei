@@ -26,6 +26,8 @@ The core should own coordination that cannot sensibly be delegated to one capabi
 
 - model/provider communication
 - conversation and session state
+- workspace instruction composition
+- Agent Skills discovery and progressive disclosure
 - extension discovery and namespace resolution
 - routing model tool calls and human slash commands
 - process lifecycle, timeout, cancellation, cwd, and error plumbing
@@ -60,6 +62,14 @@ An extension is not executable code loaded into the Go process. It is a namespac
 The same extension ID found in a higher-precedence root wins entirely over lower-precedence copies. `kei` does not merge `tools.json` from one copy with `commands.json` from another. This makes workspace overrides predictable and keeps an installed extension internally coherent.
 
 Distribution is intentionally outside the runtime. A package manager may place descriptors under a conventional XDG data path, an extension may be checked into `.kei/extensions`, or a configuration can point at another root. No kei-specific package manager is required.
+
+## Instructions and Skills use existing file contracts
+
+Project-specific agent instructions live in the workspace-root `AGENTS.md`. They are composed into the session system prompt rather than duplicated as natural-language configuration in `config.json`.
+
+Skills use the Agent Skills `SKILL.md` contract and standard `.agents/skills` locations. `kei` discovers and validates the metadata it needs for routing, advertises only names and descriptions initially, and loads full Skill instructions or referenced resources on demand. It does not introduce a `skills.json` schema or a kei-specific Skill frontmatter extension.
+
+This file-oriented boundary keeps instructions and Skills portable across agent clients while leaving process-backed capabilities in the extension system.
 
 ## Separate concepts on purpose
 

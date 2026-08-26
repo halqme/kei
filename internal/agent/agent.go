@@ -9,6 +9,7 @@ import (
 	keicommand "github.com/halqme/kei/internal/command"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/skill"
 	"github.com/halqme/kei/internal/tool"
 )
 
@@ -20,6 +21,7 @@ type Session struct {
 	Provider     provider.Provider
 	Tools        *tool.Registry
 	Commands     *keicommand.Registry
+	Skills       *skill.Registry
 	Controls     *control.Chain
 	SystemPrompt string
 	Workdir      string
@@ -48,7 +50,13 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 	s.Messages = append(s.Messages, provider.Message{Role: "user", Content: text})
 
 	for turn := 0; turn < 32; turn++ {
-		tools := s.Tools.OpenAITools()
+		var tools []map[string]any
+		if s.Tools != nil {
+			tools = s.Tools.OpenAITools()
+		}
+		if s.Skills != nil {
+			tools = append(tools, s.Skills.OpenAITools()...)
+		}
 		if s.Controls != nil {
 			d, err := s.Controls.Apply(ctx, control.Event{Kind: "before_model", SessionID: s.ID, SystemPrompt: s.SystemPrompt, Workdir: s.Workdir})
 			if err != nil {
@@ -80,21 +88,40 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 		}
 
 		for _, call := range res.Message.ToolCalls {
-			d, ok := s.Tools.Get(call.Function.Name)
-			if !ok {
-				return "", fmt.Errorf("model requested unknown tool %q", call.Function.Name)
-			}
 			input := map[string]any{}
 			if strings.TrimSpace(call.Function.Arguments) != "" {
 				if err := json.Unmarshal([]byte(call.Function.Arguments), &input); err != nil {
-					return "", fmt.Errorf("tool %s arguments: %w", d.QualifiedName, err)
+					return "", fmt.Errorf("tool %s arguments: %w", call.Function.Name, err)
 				}
 			}
+
+			toolName := call.Function.Name
+			var effects []string
+			var execute func() (string, error)
+			if s.Skills != nil && s.Skills.HandlesTool(call.Function.Name) {
+				execute = func() (string, error) {
+					return s.Skills.Execute(call.Function.Name, input)
+				}
+			} else {
+				if s.Tools == nil {
+					return "", fmt.Errorf("model requested unknown tool %q", call.Function.Name)
+				}
+				d, ok := s.Tools.Get(call.Function.Name)
+				if !ok {
+					return "", fmt.Errorf("model requested unknown tool %q", call.Function.Name)
+				}
+				toolName = d.QualifiedName
+				effects = d.Effects
+				execute = func() (string, error) {
+					return tool.Execute(ctx, s.Workdir, d, input)
+				}
+			}
+
 			if s.OnEvent != nil {
-				s.OnEvent("tool_start", map[string]any{"name": d.QualifiedName, "input": input})
+				s.OnEvent("tool_start", map[string]any{"name": toolName, "input": input})
 			}
 			if s.Controls != nil {
-				dec, err := s.Controls.Apply(ctx, control.Event{Kind: "before_tool", SessionID: s.ID, Tool: d.QualifiedName, Effects: d.Effects, Input: input, Workdir: s.Workdir})
+				dec, err := s.Controls.Apply(ctx, control.Event{Kind: "before_tool", SessionID: s.ID, Tool: toolName, Effects: effects, Input: input, Workdir: s.Workdir})
 				if err != nil {
 					return "", err
 				}
@@ -104,9 +131,9 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 					continue
 				case "ask":
 					if s.Approve == nil {
-						return "", fmt.Errorf("tool %s requires approval but no approval frontend is available", d.QualifiedName)
+						return "", fmt.Errorf("tool %s requires approval but no approval frontend is available", toolName)
 					}
-					yes, err := s.Approve(ctx, d.QualifiedName, dec.Reason, input)
+					yes, err := s.Approve(ctx, toolName, dec.Reason, input)
 					if err != nil {
 						return "", err
 					}
@@ -116,16 +143,16 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 					}
 				}
 			}
-			out, err := tool.Execute(ctx, s.Workdir, d, input)
+			out, err := execute()
 			if s.OnEvent != nil {
-				s.OnEvent("tool_end", map[string]any{"name": d.QualifiedName, "output": out, "error": errString(err)})
+				s.OnEvent("tool_end", map[string]any{"name": toolName, "output": out, "error": errString(err)})
 			}
 			if err != nil {
 				out = "ERROR: " + err.Error() + "\n" + out
 			}
 			s.Messages = append(s.Messages, provider.Message{Role: "tool", ToolCallID: call.ID, Content: out})
 			if s.Controls != nil {
-				_, _ = s.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: s.ID, Tool: d.QualifiedName, Effects: d.Effects, Input: input, Workdir: s.Workdir})
+				_, _ = s.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: s.ID, Tool: toolName, Effects: effects, Input: input, Workdir: s.Workdir})
 			}
 		}
 	}
