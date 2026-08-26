@@ -2,7 +2,8 @@ package auth
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"os"
@@ -128,7 +129,7 @@ func (s *Store) Save() error {
 		"providers": s.providers,
 	}
 
-	b, err := json.MarshalIndent(root, "", "  ")
+	b, err := json.Marshal(root, jsontext.Multiline(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

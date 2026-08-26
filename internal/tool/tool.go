@@ -3,7 +3,7 @@ package tool
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os/exec"
 	"path/filepath"

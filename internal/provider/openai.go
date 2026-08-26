@@ -3,7 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strings"
@@ -43,7 +43,7 @@ func (p *OpenAICompatible) Stream(ctx context.Context, messages []Message, tools
 	defer resp.Body.Close()
 	if resp.StatusCode/100 != 2 {
 		var e any
-		_ = json.NewDecoder(resp.Body).Decode(&e)
+		_ = json.UnmarshalRead(resp.Body, &e)
 		return Result{}, fmt.Errorf("provider returned %s: %v", resp.Status, e)
 	}
 	var raw struct {
@@ -52,7 +52,7 @@ func (p *OpenAICompatible) Stream(ctx context.Context, messages []Message, tools
 			FinishReason string  `json:"finish_reason"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &raw); err != nil {
 		return Result{}, err
 	}
 	if len(raw.Choices) == 0 {

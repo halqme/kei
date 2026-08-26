@@ -3,7 +3,8 @@ package acp
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 
@@ -45,13 +46,13 @@ func TestSessionPromptForwardsStreamChunksToACP(t *testing.T) {
 		JSONRPC: "2.0",
 		ID:      1,
 		Method:  "session/new",
-		Params:  json.RawMessage(`{"cwd":"/tmp"}`),
+		Params:  jsontext.Value(`{"cwd":"/tmp"}`),
 	})
 	s.handle(t.Context(), request{
 		JSONRPC: "2.0",
 		ID:      2,
 		Method:  "session/prompt",
-		Params:  json.RawMessage(`{"sessionId":"kei-1","prompt":[{"type":"text","text":"Say hello"}]}`),
+		Params:  jsontext.Value(`{"sessionId":"kei-1","prompt":[{"type":"text","text":"Say hello"}]}`),
 	})
 
 	var chunks []string

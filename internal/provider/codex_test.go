@@ -1,7 +1,7 @@
 package provider
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -101,7 +101,7 @@ func TestCodexStream(t *testing.T) {
 		receivedAccept = r.Header.Get("Accept")
 
 		var requestBody map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&requestBody); err == nil {
+		if err := json.UnmarshalRead(r.Body, &requestBody); err == nil {
 			receivedStream, _ = requestBody["stream"].(bool)
 		}
 

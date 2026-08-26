@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"flag"
 	"fmt"
 	"os"
@@ -43,7 +43,7 @@ func models(args []string) error {
 			Aliases:                cfg.Models,
 			SupportedProviderTypes: supported,
 		}
-		return json.NewEncoder(os.Stdout).Encode(out)
+		return json.MarshalWrite(os.Stdout, out)
 	}
 
 	fmt.Println("Configured Connection Targets:")
@@ -122,7 +122,7 @@ func extensions(args []string) error {
 		return err
 	}
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(r.Extensions)
+		return json.MarshalWrite(os.Stdout, r.Extensions)
 	}
 	for _, ext := range r.Extensions {
 		fmt.Printf("%-20s tools=%d commands=%d %s\n", ext.ID, len(ext.Tools), len(ext.Commands), ext.Root)
@@ -151,7 +151,7 @@ func tools(args []string) error {
 	}
 	ds := r.Tools.List()
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(ds)
+		return json.MarshalWrite(os.Stdout, ds)
 	}
 	for _, d := range ds {
 		fmt.Printf("%-28s %-28s %s\n", d.QualifiedName, d.ModelName, d.Description)
@@ -180,7 +180,7 @@ func commands(args []string) error {
 	}
 	ds := r.Commands.List()
 	if *jsonOut {
-		return json.NewEncoder(os.Stdout).Encode(ds)
+		return json.MarshalWrite(os.Stdout, ds)
 	}
 	for _, d := range ds {
 		fmt.Printf("/%-27s %s\n", d.QualifiedName, d.Description)

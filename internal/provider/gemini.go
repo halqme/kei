@@ -3,7 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -106,7 +106,7 @@ func (p *Gemini) Stream(ctx context.Context, messages []Message, tools []map[str
 		} `json:"candidates"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &raw); err != nil {
 		return Result{}, err
 	}
 

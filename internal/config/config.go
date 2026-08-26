@@ -1,7 +1,8 @@
 package config
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -170,7 +171,7 @@ func Save(path string, cfg Config) error {
 	if path == "" {
 		return errors.New("configuration path is empty")
 	}
-	b, err := json.MarshalIndent(cfg, "", "  ")
+	b, err := json.Marshal(cfg, jsontext.Multiline(true), jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

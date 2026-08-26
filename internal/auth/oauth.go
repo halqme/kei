@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -20,16 +20,16 @@ import (
 
 // OAuthConfig defines endpoint parameters for standard OAuth 2.0 PKCE and Device Code flows.
 type OAuthConfig struct {
-	ClientID            string
-	AuthorizeURL        string
-	TokenURL            string
-	RedirectURI         string
-	Port                int
-	Scope               string
-	DeviceUserCodeURL   string
-	DeviceTokenURL      string
-	DeviceAuthURL       string
-	DeviceRedirectURI   string
+	ClientID             string
+	AuthorizeURL         string
+	TokenURL             string
+	RedirectURI          string
+	Port                 int
+	Scope                string
+	DeviceUserCodeURL    string
+	DeviceTokenURL       string
+	DeviceAuthURL        string
+	DeviceRedirectURI    string
 	ExtraAuthorizeParams map[string]string
 }
 
@@ -90,7 +90,7 @@ func ExchangeOAuthCode(ctx context.Context, client *http.Client, tokenURL, clien
 	}
 
 	var tr tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &tr); err != nil {
 		return nil, err
 	}
 
@@ -135,7 +135,7 @@ func RefreshOAuthToken(ctx context.Context, client *http.Client, tokenURL, clien
 	}
 
 	var tr tokenResponse
-	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &tr); err != nil {
 		return nil, err
 	}
 
@@ -271,7 +271,7 @@ func RunDeviceCodeFlow(ctx context.Context, cfg OAuthConfig, notify func(userCod
 	}
 
 	var devInfo DeviceAuthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&devInfo); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &devInfo); err != nil {
 		return nil, err
 	}
 	if devInfo.IntervalSeconds <= 0 {

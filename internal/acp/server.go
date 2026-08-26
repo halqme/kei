@@ -3,7 +3,8 @@ package acp
 import (
 	"bufio"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"sync"
@@ -29,10 +30,10 @@ func NewServer(in io.Reader, out io.Writer, f SessionFactory) *Server {
 }
 
 type request struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      any             `json:"id,omitempty"`
-	Method  string          `json:"method"`
-	Params  json.RawMessage `json:"params,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      any            `json:"id,omitempty"`
+	Method  string         `json:"method"`
+	Params  jsontext.Value `json:"params,omitempty"`
 }
 type response struct {
 	JSONRPC string `json:"jsonrpc"`

@@ -3,7 +3,7 @@ package provider
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -101,7 +101,7 @@ func (p *Anthropic) Stream(ctx context.Context, messages []Message, tools []map[
 		} `json:"content"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &raw); err != nil {
 		return Result{}, err
 	}
 
