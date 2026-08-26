@@ -1,275 +1,126 @@
 # AGENTS.md
 
-## Project
+This file describes how to change `kei`. Product concepts and public contracts belong in `docs/`; do not turn this file back into a second README.
 
-`kei` (継) is a small Unix-native harness for coding agents.
+## Before editing
 
-The core idea is not to build an extensible application by adding a large plugin subsystem. `kei` stays small, delegates capabilities to ordinary OS processes, and becomes extensible as a consequence of Unix-style composition.
+1. Read the files that own the behavior you are changing, including nearby tests.
+2. Read the matching document under `docs/` when the change touches a public or architectural contract.
+3. Decide whether the behavior belongs in the Go control plane at all. Prefer an extension process, descriptor, control, or existing Unix command when that keeps the core smaller.
+4. For Go changes, follow `.agents/skills/use-modern-go/SKILL.md` before editing the relevant Go files.
 
-When making changes, preserve that direction. Prefer a small stable process boundary over adding another abstraction to the core.
+Start from the narrowest package that can own the change. Avoid routing unrelated behavior through `internal/agent` just because every session eventually passes through it.
 
-## Architecture
+## Change map
 
-The Go process is the control plane. Its responsibilities should remain limited to things such as:
-
-- LLM provider communication
-- the agent loop and session state
-- extension discovery
-- tool and slash-command routing
-- process execution, supervision, cancellation, and timeouts
-- control hooks
-- frontend adapters such as ACP
-
-Concrete capabilities should normally live outside the harness as processes. Examples include language-specific code analysis, LSP integration, browser automation, Git workflows, formatters, static analyzers, and OS-specific sandboxing.
-
-Do not move a capability into the core merely because implementing it in Go is convenient.
-
-## Execution model
-
-`kei` coordinates a session; it is not the host for extension capabilities. A normal model turn is:
-
-1. The session asks a provider for one completed model result.
-2. If the result contains a tool call, the session resolves the descriptor, applies controls, and launches the declared process.
-3. The process result is added to the conversation and the session asks the provider for the next result.
-4. A frontend projects session results and lifecycle events to the client.
-
-A discovered slash command bypasses model turns and runs its process directly. The current `internal/provider.Provider` interface is stream-oriented: `Stream` may emit provider events while it returns a completed `Result`. Codex consumes its Responses SSE transport incrementally; other provider transports may still buffer and emit one text event. Tool, slash-command, and control execution currently collect child-process output until exit. This is an implementation status, not a Unix design rule.
-
-The process boundary can carry incremental output, but streaming is an optional behavior that must be represented in provider, session, and frontend contracts. Do not conflate Unix process composition with either streaming or buffering.
-
-## Connections and configuration
-
-A connection target is a named provider configuration, not merely a provider type. `Config.Providers` is an ordered list; the first entry is used when no override is supplied. When the list is empty, session startup derives candidates from available authenticated provider types in the stable order returned by `provider.List` and uses the first candidate.
-
-Session startup may create the initial user configuration with those candidates. Read-only inspection commands should not create or rewrite configuration files. Credentials and API keys must remain in the auth store or environment, never in generated configuration.
-
-There is no implicit provider-type fallback. Missing or invalid provider types must produce an explicit error and available-provider guidance.
-
-## Unix process boundary
-
-Treat the process boundary as the primary extension ABI:
-
-- executable
-- argv
-- stdin
-- stdout
-- stderr
-- exit status
-- signals
-- environment
-- working directory
-
-This is an invocation ABI, not a promise of live output. Request/response and streaming processes are both compatible with it; choose the behavior required by the capability and its descriptor/protocol.
-
-Tool implementations may use any language. Do not introduce a requirement that extensions use Go, Node.js, or any other particular runtime.
-
-Prefer existing CLI programs over reimplementing their behavior inside `kei`.
-
-## Extensions
-
-An extension is a distribution and namespace unit, not in-process code injection.
-
-Extension roots are discovered in precedence order:
-
-1. `<workspace>/.kei/extensions/`
-2. `$XDG_DATA_HOME/kei/extensions/`
-3. each `$XDG_DATA_DIRS` entry with `/kei/extensions/` appended
-4. extra roots from `extension_dirs`
-
-An extension has the form:
+Use the existing package boundary as the first routing decision:
 
 ```text
-extensions/<id>/
-├── tools.json       # optional
-├── commands.json    # optional
-├── tools/           # optional executables
-└── commands/        # optional executables
+cmd/kei              CLI parsing, help, REPL wiring, command entry points
+internal/acp          ACP JSON-RPC/frontend projection
+internal/agent        session orchestration and model/tool loop
+internal/auth         credential storage and provider authentication
+internal/command      slash-command descriptors, parsing, execution
+internal/config       config schema, lookup, creation, persistence
+internal/control      generic external control chain
+internal/extension    extension roots, discovery, shadowing, namespacing
+internal/provider     provider interface and provider transports
+internal/tool         tool descriptors, registry, argv/stdin execution
 ```
 
-A higher-precedence extension shadows a lower-precedence extension with the same ID **as a whole**. Do not partially merge tools or commands across copies of the same extension.
+A new package needs a clear owner-independent responsibility. If the proposed package is primarily one concrete capability such as Git integration, code search, LSP, browser automation, formatting, or sandbox implementation, first try to make it an external process.
 
-Keep `tools.json` and `commands.json` explicit. Do not infer descriptors from `--help`, man pages, shell completions, or other human-oriented CLI output as part of normal discovery.
+## Implementation workflow
 
-### Tool identity
+Make changes in this order unless the task gives a better local sequence:
 
-Tool identity is namespaced by the extension:
+1. Locate the existing contract and its tests.
+2. Add or adjust the smallest test that captures the intended behavior.
+3. Implement the change in the package that owns that contract.
+4. Run `gofmt` on modified Go files.
+5. Run focused tests while iterating.
+6. Run the repository verification commands before finishing.
+7. Update `docs/` in the same change when user-visible behavior, descriptor fields, discovery, configuration, execution semantics, provider behavior, controls, or ACP projection changed.
 
-```text
-<extension>.<tool>
-```
+Do not add speculative abstractions for future backends. Introduce an interface or protocol field when current independent implementations need the distinction.
 
-Provider-facing names may use another representation such as `<extension>_<tool>` when required by provider naming constraints. Treat that representation as transport-specific; the qualified `extension.tool` identity is canonical inside `kei`.
+## Verification
 
-### Slash commands
-
-Slash commands are namespaced as:
-
-```text
-/<extension>:<command>
-```
-
-Only discovered commands should be intercepted. Do not reserve every string beginning with `/`; unknown slash-prefixed input must remain valid user input and continue through the ordinary prompt path.
-
-Slash commands are a user-facing route to capabilities. They are not inherently prompts and should not be implemented by blindly rewriting every command into model text.
-
-## Executable resolution and cwd
-
-For extension declarations:
-
-- commands without path separators, e.g. `rg`, are resolved through `PATH`
-- relative commands, e.g. `./tools/symbol`, are resolved relative to the extension root
-- the spawned process itself runs with the session workspace as its working directory
-
-Preserve this distinction. It allows an extension to own its executable while naturally operating on the active repository.
-
-## Tools, commands, skills, and controls
-
-Keep these concepts separate:
-
-- **Tool**: an agent-facing operation selected through a provider tool call.
-- **Tool descriptor**: the explicit schema and process invocation contract for a tool.
-- **Slash command**: a human-facing named route to a process, intercepted before the normal model prompt path.
-- **Skill**: guidance about when, why, and in what sequence to use capabilities; it is not itself a tool or executable process.
-- **Control**: a policy hook that can affect model or tool execution without defining the capability itself.
-
-Do not put CLI manuals into Skills when a descriptor can express the invocation interface.
-
-Do not hard-code higher-level modes such as Plan, YOLO, Review, or Research into the core. The core should expose general control points; higher-level behavior should be composable outside it.
-
-## Controls
-
-Controls are process-oriented. They may participate in events such as `before_model`, `before_tool`, and `after_tool` and return decisions such as `allow`, `deny`, or `ask`.
-
-Keep the control mechanism generic. A feature request framed as a new "mode" should first be considered as a composition of controls, prompts, visible tools, and frontend state rather than a new branch in the agent loop.
-
-Metadata such as tool effects is useful for policy and UX but is not a security boundary. Strong isolation belongs in OS-level sandboxing or dedicated sandbox helper processes.
-
-## ACP and frontends
-
-ACP is the primary interactive frontend boundary. The harness should not accumulate a large custom TUI.
-
-Keep ACP isolated behind an adapter. Internal session, tool, and control models must not become ACP-specific merely because ACP exposes a similar concept.
-
-When ACP supports a frontend feature, prefer projecting existing internal state or extension declarations into ACP rather than duplicating that concept in the core.
-
-Examples:
-
-- discovered slash commands -> `available_commands_update`
-- tool and command lifecycle -> `session/update`
-- approval requests -> ACP client permission UI when supported
-- session output -> `session/update`
-
-The adapter emits lifecycle notifications and a completed agent response for each prompt. Providers that emit `StreamEvent` text deltas are projected as `agent_message_chunk` updates; the explicit provider, session, and frontend contracts—not the update name alone—define whether output is streamed. Additional incremental output requires extending those contracts.
-
-ACP is a transport/frontend contract, not the internal architecture.
-
-## Go implementation style
-
-The Go core should be deliberately boring.
-
-Prefer:
-
-- the standard library where practical
-- small packages with obvious ownership
-- plain structs and interfaces
-- `context.Context` for cancellation and lifetimes
-- `os/exec` and explicit process boundaries
-- simple JSON structures at external boundaries
-- deterministic discovery and ordering
-- explicit errors over hidden fallback behavior
-
-Avoid adding dependencies or framework layers unless they remove substantial complexity that is already present.
-
-Do not add abstraction in anticipation of hypothetical future backends. Implement the smallest interface required by current independent use cases.
-
-## Package responsibilities
-
-Current package boundaries are intentional:
-
-```text
-cmd/kei              CLI entry point
-internal/acp          ACP frontend adapter
-internal/agent        agent/session orchestration
-internal/command      slash-command descriptors and execution
-internal/config       configuration loading
-internal/control      generic control process integration
-internal/extension    extension discovery and namespacing
-internal/provider     LLM provider boundary
-internal/tool         tool descriptors, registry, and execution
-```
-
-Before creating a new package, check whether the functionality belongs in an external process instead.
-
-Avoid import cycles and avoid making `internal/agent` a dumping ground for extension-specific behavior.
-
-## Compatibility and configuration
-
-This project is pre-release; breaking changes to the configuration schema are acceptable when they make the connection model explicit. Treat extension declaration formats and canonical qualified names as user-maintained interfaces.
-
-The configuration contract is:
-
-- `providers` is an ordered list of named connection targets.
-- The first configured target is selected when no override is supplied.
-- An empty list falls back to available authenticated provider types in stable order.
-- Session startup may generate a user configuration; inspection commands must remain read-only.
-
-Do not silently reinterpret existing descriptor fields.
-
-When changing discovery behavior, shadowing, executable resolution, namespaces, workspace semantics, provider selection, or configuration generation, add tests covering precedence, ordering, fallback, and non-overwrite boundaries.
-
-## Testing
-
-Run before considering a change complete:
+The repository tasks are defined in `.justfile`:
 
 ```sh
-go test ./...
-go build ./cmd/kei
+just test
+just vet
+just build
 ```
 
-For changes to extension discovery, add or update tests for at least:
+Equivalent commands are:
 
-- workspace/user/system precedence
-- extension-level shadowing
-- deterministic discovery
-- qualified tool/command names
+```sh
+go test -count=1 ./...
+go vet ./...
+go build -o ./build/kei ./cmd/kei
+```
 
-For changes to process execution, test relevant combinations of:
+Run focused package tests first when useful, but the full test suite is the completion gate for Go changes.
 
-- PATH-resolved commands
-- extension-relative executables
-- workspace cwd
-- stdin mode
-- argument placeholders and defaults
-- timeout/cancellation
-- stderr and non-zero exits
+Documentation-only changes do not require inventing code changes merely to exercise the suite. Still check that command names, paths, JSON fields, and examples match the implementation.
 
-For provider selection and configuration generation, test:
+## Tests that must travel with behavior
 
-- first configured target ordering
-- available-provider fallback ordering
-- generated config path and permissions
-- existing config is not overwritten
-- explicit missing paths are not created
+When changing extension discovery, cover the affected precedence and determinism boundaries: workspace/user/system/additional roots, whole-extension shadowing, hidden directories, and qualified names.
 
-For ACP changes, keep protocol parsing tests separate from agent behavior where possible.
+When changing tool or slash-command execution, cover the relevant combination of `PATH` lookup, extension-relative executable resolution, workspace cwd, stdin mode, placeholders/defaults, timeout/cancellation, stderr, and non-zero exit behavior.
+
+When changing configuration or provider selection, cover ordering, explicit overrides, generated config location/permissions, existing-file preservation, explicit missing paths, authentication checks, and unsupported provider errors as applicable.
+
+When changing provider transports, keep transport-specific serialization/parsing tests in `internal/provider`; do not make agent-loop tests prove HTTP details.
+
+When changing ACP, keep protocol parsing/projection tests in `internal/acp` and session semantics in `internal/agent` where possible.
+
+## Architectural invariants
+
+Preserve these unless the task explicitly changes the contract and the corresponding docs/tests are updated:
+
+- The OS process boundary is the extension ABI: executable, argv, stdin/stdout/stderr, exit status, signals, environment, and cwd.
+- Extensions are namespace/distribution units, not in-process plugins.
+- `tools.json` and `commands.json` are explicit declarations. Normal discovery does not infer agent contracts from `--help`, man pages, or shell completion metadata.
+- Higher-precedence extension roots shadow a lower-precedence extension with the same ID as a whole; copies are not partially merged.
+- Canonical tool identity is `<extension>.<tool>`. Provider-facing function names are transport representations.
+- Canonical slash-command identity is `<extension>:<command>`, invoked by users as `/<extension>:<command>`.
+- Unknown slash-prefixed text remains ordinary prompt input; only discovered commands are intercepted.
+- A command without a path separator is resolved through `PATH`. A relative command containing a path separator is resolved from the extension root. The child process runs with the session workspace as cwd.
+- Tools, slash commands, skills, and controls are separate concepts.
+- Tool `effects` are policy/UX metadata, not a security boundary.
+- ACP is a frontend adapter, not the internal data model.
+- Credentials stay in the auth store or environment; generated configuration does not contain secrets.
+- `providers` is ordered. Without an explicit target, the first configured target wins. Session startup may synthesize candidates when none are configured; read-only inspection must not mutate configuration.
+
+The rationale and public description of these invariants live in `docs/architecture.md` and the relevant reference documents.
+
+## Cross-cutting changes
+
+A change that alters a seam should be treated as cross-cutting even if the diff begins in one package. In particular:
+
+- Descriptor schema changes usually touch descriptor parsing, execution, examples, docs, and tests.
+- Provider stream changes usually touch `internal/provider`, `internal/agent`, and frontend projection.
+- New control decisions usually touch the control protocol, session behavior, approval behavior, and docs.
+- Workspace semantics usually touch discovery, process cwd, ACP session creation, CLI wiring, and tests.
+- Naming changes usually touch extension discovery, registries, provider function-name conversion, CLI inspection, ACP command advertisement, docs, and examples.
+
+Trace these paths before coding instead of fixing downstream breakage one package at a time.
 
 ## Scope discipline
 
-Keep the project focused on being a harness.
+Keep `kei` a harness. A feature request described as a mode, integration, or UX feature is not automatically core runtime work.
 
-Before adding a feature to the core, ask:
+Before adding core behavior, check whether the requirement can be satisfied by:
 
-1. Can an existing Unix command already do this?
-2. Can this be an extension-owned process?
-3. Can this be expressed as a descriptor or control instead of core behavior?
-4. Is the proposed protocol addition required by multiple real implementations?
+1. an existing command on `PATH`;
+2. an extension-owned executable;
+3. `tools.json` or `commands.json`;
+4. a generic control process;
+5. a skill or prompt;
+6. the ACP client/frontend.
 
-If the answer points outside the core, keep it outside the core.
-
-Do not build a kei-specific package manager unless concrete requirements cannot be met by existing distribution mechanisms such as Homebrew, Nix, Cargo, npm, pipx, or ordinary filesystem installation.
-
-Do not add descriptor generation from `--help` as a default or required workflow.
-
-Do not build a full TUI when ACP can delegate the UI to a client.
-
-Above all: keep `kei` small enough that capabilities can evolve independently of it.
+Only expand the core when the missing behavior is genuinely coordination or a reusable boundary that the harness must own.
