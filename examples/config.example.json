@@ -1,0 +1,40 @@
+{
+  "providers": [
+    {
+      "name": "openai",
+      "type": "openai",
+      "model": "gpt-5.6",
+      "models": ["gpt-5.6", "gpt-5.5", "gpt-5.5-mini"]
+    },
+    {
+      "name": "claude",
+      "type": "anthropic",
+      "model": "claude-3-7-sonnet-20250219",
+      "models": ["claude-3-7-sonnet-20250219", "claude-3-5-haiku-20241022"]
+    },
+    {
+      "name": "codex",
+      "type": "codex",
+      "model": "gpt-5.5",
+      "models": ["gpt-5.5", "gpt-5.5-mini"]
+    },
+    {
+      "name": "gemini",
+      "type": "gemini",
+      "model": "gemini-2.5-flash",
+      "models": ["gemini-2.5-pro", "gemini-2.5-flash"]
+    },
+    {
+      "name": "local",
+      "type": "ollama",
+      "model": "llama3.3"
+    }
+  ],
+  "models": {
+    "fast": "gpt-5.5-mini",
+    "smart": "claude-3-7-sonnet-20250219"
+  },
+  "extension_dirs": ["./examples/extensions"],
+  "controls": [],
+  "system_prompt": "You are a coding agent. Inspect the workspace and use available tools when useful."
+}

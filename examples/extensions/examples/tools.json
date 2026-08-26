@@ -1,0 +1,27 @@
+{
+  "tools": [
+    {
+      "name": "search_text",
+      "description": "Search text in the workspace with ripgrep.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pattern": {"type": "string"},
+          "path": {"type": "string", "default": "."}
+        },
+        "required": ["pattern"]
+      },
+      "command": "rg",
+      "args": ["--no-heading", "--line-number", "{pattern}", "{path}"],
+      "effects": ["filesystem.read"]
+    },
+    {
+      "name": "git_diff",
+      "description": "Show the current Git diff.",
+      "input_schema": {"type": "object", "properties": {}},
+      "command": "git",
+      "args": ["diff"],
+      "effects": ["filesystem.read", "git.read"]
+    }
+  ]
+}
