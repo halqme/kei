@@ -9,9 +9,11 @@ import (
 	"github.com/halqme/kei/internal/agent"
 	"github.com/halqme/kei/internal/auth"
 	"github.com/halqme/kei/internal/config"
+	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/extension"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/skill"
 )
 
 func loadConfig(path string) (config.Config, error) { return config.Load(path) }
@@ -40,14 +42,23 @@ func makeSession(cfg config.Config, r *extension.Registry, id, workdir, provider
 	if err := requireProviderAuth(context.Background(), pCfg); err != nil {
 		return nil, err
 	}
+	skills, err := skill.Discover(skill.SearchRoots(workdir))
+	if err != nil {
+		return nil, err
+	}
+	contextBuilder, err := agentcontext.NewForWorkspace(workdir, skills.CatalogPrompt())
+	if err != nil {
+		return nil, err
+	}
 	return &agent.Session{
-		ID:           id,
-		Tools:        r.Tools,
-		Commands:     r.Commands,
-		Controls:     control.New(cfg.Controls),
-		SystemPrompt: cfg.SystemPrompt,
-		Workdir:      workdir,
-		Provider:     prov,
+		ID:             id,
+		Tools:          r.Tools,
+		Commands:       r.Commands,
+		Skills:         skills,
+		Controls:       control.New(cfg.Controls),
+		ContextBuilder: contextBuilder,
+		Workdir:        workdir,
+		Provider:       prov,
 	}, nil
 }
 

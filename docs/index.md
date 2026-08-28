@@ -8,7 +8,7 @@ If you want to use `kei`:
 
 - [Connect](connect.md) — authenticate a provider and start a session.
 - [Configuration](configuration.md) — provider targets, model aliases, extension roots, controls, and config lookup.
-- [Sessions](session.md) — what happens to prompts, slash commands, tool calls, controls, and streamed output.
+- [Sessions](session.md) — workspace `AGENTS.md`, Agent Skills, prompts, slash commands, tool calls, controls, and streamed output.
 - [ACP](acp.md) — expose a session to an ACP client.
 
 If you want to extend `kei`:
@@ -40,7 +40,7 @@ A few terms recur throughout the documentation:
 
 **Slash command** is a human-facing operation. The canonical identity is `<extension>:<command>` and users invoke it as `/<extension>:<command>`.
 
-**Skill** is guidance for how to work with capabilities. It is not an executable capability itself.
+**Skill** is Agent Skills `SKILL.md` guidance for how to work with capabilities. It is not an executable capability itself.
 
 **Control** is an external policy hook that can alter or stop model/tool execution.
 

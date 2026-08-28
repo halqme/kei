@@ -26,7 +26,7 @@ That makes extension boring in a useful way: files, JSON, processes, stdin/stdou
 
 ## What kei owns
 
-`kei` owns the control plane: provider communication, session state, discovery and routing, child-process supervision, policy hooks, and frontend adapters.
+`kei` owns the control plane: provider communication, session state, workspace instructions, Agent Skills discovery, extension discovery and routing, child-process supervision, policy hooks, and frontend adapters.
 
 It deliberately does **not** try to own every capability around that control plane. There is no in-process plugin runtime, no kei-specific package manager, and no giant custom TUI. Higher-level modes such as Plan or YOLO are expected to emerge from generic controls, prompts, visible tools, and frontend behavior rather than branches hard-coded into the agent loop.
 
@@ -48,6 +48,12 @@ An extension is a namespace and distribution unit:
 `tools.json` exposes operations to the model. `commands.json` exposes operations to the human as slash commands. Both may point at extension-owned executables or existing commands on `PATH`.
 
 A tool becomes `astrolabe.symbol`; a slash command becomes `/astrolabe:inspect`. The implementation behind either name remains an ordinary process.
+
+## Instructions and Skills stay portable
+
+Project-specific instructions live in the workspace-root `AGENTS.md`. Skills use the Agent Skills `SKILL.md` format under `.agents/skills`; `kei` does not define another prompt field or a parallel Skill descriptor format.
+
+The initial model context contains only Skill names and descriptions. Full `SKILL.md` instructions and referenced resources are loaded when needed.
 
 ## A small core, many possible agents
 
@@ -100,6 +106,6 @@ The README is intentionally the front door rather than the manual.
 
 ## Status
 
-`kei` is pre-release and intentionally small. The current implementation already has provider selection, authentication, model/tool turns, explicit extension discovery, slash commands, process controls, streaming provider events, a REPL, and an ACP adapter. Some boundaries are deliberately still narrow: child-process output is collected until exit, ACP permission round-trips are incomplete, persistent tool services are not part of the process contract, and controls are configured separately rather than declared by extensions.
+`kei` is pre-release and intentionally small. The current implementation already has provider selection, authentication, workspace `AGENTS.md`, Agent Skills discovery and progressive loading, model/tool turns, explicit extension discovery, slash commands, process controls, streaming provider events, a REPL, and an ACP adapter. Some boundaries are deliberately still narrow: nested `AGENTS.md` scoping is not implemented, child-process output is collected until exit, ACP permission round-trips are incomplete, persistent tool services are not part of the process contract, and controls are configured separately rather than declared by extensions.
 
 Those gaps are not invitations to turn the core into a framework. New mechanisms should earn their place by making the seams more general, not by absorbing the things on either side of them.

@@ -20,7 +20,6 @@ func TestLoadOrCreateGeneratesAndPreservesOrderedProviders(t *testing.T) {
 			{Name: "first", Type: "ollama"},
 			{Name: "second", Type: "openai"},
 		},
-		SystemPrompt: "generated prompt",
 	}
 	got, err := LoadOrCreate("", defaults)
 	if err != nil {
