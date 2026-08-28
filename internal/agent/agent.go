@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	keicommand "github.com/halqme/kei/internal/command"
+	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/skill"
@@ -17,17 +18,17 @@ type ApprovalFunc func(ctx context.Context, toolName, reason string, input map[s
 type EventFunc func(kind string, payload any)
 
 type Session struct {
-	ID           string
-	Provider     provider.Provider
-	Tools        *tool.Registry
-	Commands     *keicommand.Registry
-	Skills       *skill.Registry
-	Controls     *control.Chain
-	SystemPrompt string
-	Workdir      string
-	Messages     []provider.Message
-	Approve      ApprovalFunc
-	OnEvent      EventFunc
+	ID             string
+	Provider       provider.Provider
+	Tools          *tool.Registry
+	Commands       *keicommand.Registry
+	Skills         *skill.Registry
+	Controls       *control.Chain
+	ContextBuilder *agentcontext.Builder
+	Workdir        string
+	Messages       []provider.Message
+	Approve        ApprovalFunc
+	OnEvent        EventFunc
 }
 
 func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
@@ -44,9 +45,6 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 		}
 	}
 
-	if len(s.Messages) == 0 && s.SystemPrompt != "" {
-		s.Messages = append(s.Messages, provider.Message{Role: "system", Content: s.SystemPrompt})
-	}
 	s.Messages = append(s.Messages, provider.Message{Role: "user", Content: text})
 
 	for turn := 0; turn < 32; turn++ {
@@ -57,19 +55,22 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 		if s.Skills != nil {
 			tools = append(tools, s.Skills.OpenAITools()...)
 		}
+
+		instructions := s.ContextBuilder.BaseInstructions()
 		if s.Controls != nil {
-			d, err := s.Controls.Apply(ctx, control.Event{Kind: "before_model", SessionID: s.ID, SystemPrompt: s.SystemPrompt, Workdir: s.Workdir})
+			d, err := s.Controls.Apply(ctx, control.Event{Kind: "before_model", SessionID: s.ID, SystemPrompt: instructions, Workdir: s.Workdir})
 			if err != nil {
 				return "", err
 			}
-			if d.SystemPrompt != "" && len(s.Messages) > 0 && s.Messages[0].Role == "system" {
-				s.Messages[0].Content = d.SystemPrompt
+			if d.SystemPrompt != "" {
+				instructions = d.SystemPrompt
 			}
 			if len(d.HiddenTools) > 0 {
 				tools = filterTools(tools, d.HiddenTools)
 			}
 		}
 
+		materialized := s.ContextBuilder.Materialize(s.Messages, tools, instructions)
 		var callback provider.StreamCallback
 		if s.OnEvent != nil {
 			callback = func(event provider.StreamEvent) {
@@ -78,7 +79,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 				}
 			}
 		}
-		res, err := s.Provider.Stream(ctx, s.Messages, tools, callback)
+		res, err := s.Provider.Stream(ctx, materialized.Messages, materialized.Tools, callback)
 		if err != nil {
 			return "", err
 		}

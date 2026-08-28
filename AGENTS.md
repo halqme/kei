@@ -30,9 +30,9 @@ internal/agent        session orchestration and model/tool loop
 internal/auth         credential storage and provider authentication
 internal/command      slash-command descriptors, parsing, execution
 internal/config       config schema, lookup, creation, persistence
+internal/context      model-context materialization from runtime instructions and transcript tail
 internal/control      generic external control chain
 internal/extension    extension roots, discovery, shadowing, namespacing
-internal/instruction  workspace AGENTS.md and system instruction composition
 internal/provider     provider interface and provider transports
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, argv/stdin execution
@@ -101,6 +101,8 @@ When changing extension discovery, cover the affected precedence and determinism
 
 When changing workspace instructions or Agent Skills, cover the affected root precedence, required metadata, progressive disclosure, and resource confinement boundaries without inventing nested scoping or extra Skill schema.
 
+When changing context materialization, cover the boundary between runtime instructions and transcript history; request-scoped instruction changes must not rewrite canonical conversation state.
+
 When changing tool or slash-command execution, cover the relevant combination of `PATH` lookup, extension-relative executable resolution, workspace cwd, stdin mode, placeholders/defaults, timeout/cancellation, stderr, and non-zero exit behavior.
 
 When changing configuration or provider selection, cover ordering, explicit overrides, generated config location/permissions, existing-file preservation, explicit missing paths, authentication checks, and unsupported provider errors as applicable.
@@ -149,6 +151,7 @@ Preserve these unless the task explicitly changes the contract and the correspon
 - Tools, slash commands, skills, and controls are separate concepts.
 - Agent Skills use the standard `SKILL.md` contract; kei does not add a parallel Skill descriptor format.
 - Workspace-specific agent instructions come from root `AGENTS.md`; persistent natural-language instructions are not config fields.
+- Runtime instructions are materialized into provider context and are not canonical transcript entries.
 - Tool `effects` are policy/UX metadata, not a security boundary.
 - ACP is a frontend adapter, not the internal data model.
 - Credentials stay in the auth store or environment; generated configuration does not contain secrets.
@@ -162,8 +165,8 @@ A change that alters a seam should be treated as cross-cutting even if the diff 
 
 - Descriptor schema changes usually touch descriptor parsing, execution, examples, docs, and tests.
 - Provider stream changes usually touch `internal/provider`, `internal/agent`, and frontend projection.
-- New control decisions usually touch the control protocol, session behavior, approval behavior, and docs.
-- Workspace semantics usually touch discovery, instructions, process cwd, ACP session creation, CLI wiring, and tests.
+- New control decisions usually touch the control protocol, context materialization, session behavior, approval behavior, and docs.
+- Workspace semantics usually touch discovery, context, process cwd, ACP session creation, CLI wiring, and tests.
 - Naming changes usually touch extension discovery, registries, provider function-name conversion, CLI inspection, ACP command advertisement, docs, and examples.
 
 Trace these paths before coding instead of fixing downstream breakage one package at a time.

@@ -51,7 +51,7 @@ Losing provider continuation or cache state must never make a session unreadable
 
 ## Session and runtime are different things
 
-The current `internal/agent.Session` contains both logical session state and runtime dependencies: provider, tools, commands, controls, callbacks, workdir, system prompt, and conversation messages.
+The current `internal/agent.Session` still contains both logical session state and runtime dependencies: provider, tools, commands, skills, controls, callbacks, workdir, a context builder, and conversation messages.
 
 Persistent sessions should not serialize that object.
 
@@ -97,6 +97,8 @@ assistant message
 
 Provider transport types are not the transcript schema. `provider.Message` is currently sufficient for the in-memory model loop, but it is a transport-oriented representation and should not become the durable session format by accident.
 
+Runtime instructions are not transcript entries. The current `Session.Messages` slice contains user, assistant, and tool messages; system instructions are materialized separately by the context builder for each provider request.
+
 Frontend lifecycle events are also not transcript entries. Events such as `tool_start`, `tool_end`, and streamed text chunks exist to project execution progress to a frontend; they are not independently part of the logical conversation.
 
 ### Tool execution durability
@@ -135,6 +137,31 @@ The base contains long-lived model input that normally changes less often than c
 
 The exact provider representation is transport-specific.
 
+The current `internal/context.Builder` implements the first narrow form of this boundary. At session creation it assembles stable instructions from:
+
+1. kei's small built-in coding-agent instruction;
+2. `<workspace>/AGENTS.md`, when present;
+3. the name and description catalog for discovered Agent Skills.
+
+For each model turn, the builder materializes a provider-facing message slice by prepending those instructions as a system message to the current transcript tail. It also carries the currently visible tool schemas into the provider call. The builder does not yet model checkpoints, provider-native state, or compaction policy.
+
+A `before_model` control may replace the instructions for that provider request. The replacement is request-scoped context; it does not rewrite `Session.Messages` or mutate the builder's stable base.
+
+### Workspace instructions and Agent Skills
+
+Natural-language project instructions live in the workspace-root `AGENTS.md`, not in `config.json`. Nested `AGENTS.md` scoping is not part of the current contract.
+
+Agent Skills use the standard `SKILL.md` format. The current search roots, in precedence order, are:
+
+1. `<workspace>/.agents/skills`
+2. `~/.agents/skills`
+
+Each immediate non-hidden child directory is a Skill candidate. A candidate without `SKILL.md` is skipped. Required `name` and `description` metadata are validated during discovery, and the Skill name must match its parent directory. When both roots contain the same Skill name, the workspace copy wins.
+
+Only Skill names and descriptions are placed in the stable base instructions. Full Skill instructions remain progressively disclosed: the model can call `load_skill` to read a selected `SKILL.md`, then `read_skill_resource` to read referenced files under that Skill directory. Resource reads reject paths that escape the Skill root.
+
+Those Skill readers are model-facing built-ins rather than extension processes, but they pass through the same session tool lifecycle events and control/approval path as ordinary tools.
+
 ### Checkpoints
 
 A checkpoint represents previously materialized context for an older covered portion of the transcript.
@@ -150,6 +177,8 @@ A checkpoint is derived state, not conversation history.
 ### Tail
 
 The tail is the uncovered recent transcript after the selected checkpoint state. It should normally grow by appending new turns rather than rewriting old ones.
+
+The current implementation has no checkpoint storage, so the materialized tail is simply the complete in-memory `Session.Messages` slice.
 
 ### Volatile context
 
@@ -241,6 +270,8 @@ The same principle applies to instructions.
 
 Stable repository and agent instructions should be distinguishable from temporary per-turn overlays when they are semantically distinct. A control that genuinely replaces the system instruction changes the model request and should do so. A small request-scoped addition does not need to be modeled as mutation of the durable transcript.
 
+The current builder already enforces the first part of that separation: stable instructions live outside `Session.Messages`, while a `before_model` replacement affects only the materialized provider request.
+
 Provider adapters remain responsible for mapping those instruction regions into their native message or instruction format.
 
 ## Provider boundary
@@ -251,7 +282,7 @@ The current provider interface is:
 Stream(ctx, messages, tools, callback) (Result, error)
 ```
 
-That interface flattens context before the provider adapter can reason about checkpoint compatibility, stable regions, provider-native state, or request-level telemetry.
+The context builder currently has to flatten its materialized context back into that legacy pair of message/tool arguments before the provider adapter sees it. The interface therefore still loses checkpoint compatibility, stable-region identity, provider-native state, and request-level telemetry structure.
 
 Persistent sessions and compaction will likely require the provider boundary to accept a request-level representation rather than a bare message slice. The core should still avoid implementing a universal AST for every provider-native object. Portable conversation state belongs in the context model; opaque provider-native continuation or compaction state should remain provider-owned data carried through an explicit seam.
 
@@ -292,24 +323,27 @@ Currently `Session.Workdir` is:
 
 - the cwd of tool and slash-command child processes;
 - included in control events and used by control child processes as cwd;
-- the root from which ACP sessions discover workspace-local extensions.
+- the root from which ACP sessions discover workspace-local extensions;
+- the root used to read `AGENTS.md` and discover project Agent Skills when constructing the session runtime.
 
-A persistent session may record its workspace path as metadata, but reopening the session should rediscover the current runtime environment rather than deserialize old tool, command, or control registries.
+A persistent session may record its workspace path as metadata, but reopening the session should rediscover current instructions, Skills, tools, commands, and controls rather than deserialize old runtime registries.
 
 ## Current implementation
 
-Today `internal/agent.Session` owns an in-memory `Messages` slice and directly drives the model/tool loop.
+Today `internal/agent.Session` owns an in-memory `Messages` slice and directly drives the model/tool loop, while `internal/context.Builder` owns provider-context materialization.
 
 For ordinary user text it:
 
-1. installs the system message on the first model turn when configured;
-2. appends the user message;
-3. applies `before_model` controls;
-4. determines the visible tool set;
+1. appends the user message to `Session.Messages`;
+2. collects the extension-tool and Skill-reader schemas visible to the runtime;
+3. applies `before_model` controls to the stable instructions and tool availability for the current turn;
+4. asks the context builder to materialize provider messages and tools from the runtime instructions plus `Session.Messages`;
 5. calls `Provider.Stream`;
-6. appends the completed assistant message;
+6. appends the completed assistant message to `Session.Messages`;
 7. returns when there are no tool calls;
 8. otherwise executes tool calls, appends tool results, and repeats.
+
+The materialized system message is not appended to `Session.Messages`.
 
 The loop is capped at 32 model turns for one `Prompt` call.
 
@@ -331,15 +365,15 @@ ACP currently creates only in-memory sessions and advertises no session-loading 
 
 ## Implementation direction
 
-Session persistence should be introduced by forming the seams before adding compaction policy:
+A first context-builder seam now exists, but session persistence should still be introduced by forming the remaining seams before adding compaction policy:
 
 1. separate durable session state from the agent runtime;
-2. hide the current message slice behind a transcript abstraction while preserving current behavior;
-3. introduce a context builder that materializes provider input from transcript and runtime state;
-4. evolve the provider request boundary so it can carry structured context and optional provider state;
-5. add a persistent session store and resume path;
-6. expose provider usage and cache telemetry;
-7. add checkpoint storage;
+2. hide the current `provider.Message` slice behind a transcript abstraction without prematurely making the provider transport type the durable schema;
+3. evolve the provider request boundary so materialized base/checkpoint/tail/volatile regions and optional provider state do not have to be flattened too early;
+4. add a persistent session store and resume path;
+5. expose provider usage and cache telemetry;
+6. add checkpoint storage;
+7. extend the context builder to select compatible checkpoints and uncovered transcript tail;
 8. implement the first simple compaction strategy.
 
 Do not make session persistence depend on a compaction algorithm, and do not make compaction depend on a particular provider cache API.
@@ -350,10 +384,11 @@ The intended session design can be summarized by these invariants:
 
 1. A session is logical conversation state, not provider state.
 2. The transcript is canonical and append-only.
-3. Context is a materialized projection of transcript plus runtime environment.
-4. Compaction produces replaceable checkpoints rather than rewritten history.
-5. Provider continuation and prompt caches are accelerators, never sources of truth.
-6. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
-7. A session has one linear mutation stream at a time.
+3. Runtime instructions are not transcript history.
+4. Context is a materialized projection of transcript plus runtime environment.
+5. Compaction produces replaceable checkpoints rather than rewritten history.
+6. Provider continuation and prompt caches are accelerators, never sources of truth.
+7. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
+8. A session has one linear mutation stream at a time.
 
 These rules should remain true even as the storage format, compaction strategy, provider APIs, or frontend capabilities evolve.

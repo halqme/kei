@@ -95,7 +95,7 @@ Invalid JSON, a failed control process, or a non-zero exit causes the control ch
 
 The session applies `before_model` before each provider call.
 
-A returned `system_prompt` updates the first system message when one exists. Returned `hidden_tools` are removed from the tool list presented to the provider for that model turn.
+A returned `system_prompt` replaces the instructions used when the context builder materializes that provider request. It does not rewrite the session transcript or mutate the builder's stable base. Returned `hidden_tools` are removed from the tool list presented to the provider for that model turn.
 
 The current session primarily consumes prompt/tool-visibility changes from `before_model`; do not assume `deny`/`ask` has a fully symmetrical model-level workflow.
 

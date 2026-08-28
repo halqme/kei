@@ -9,9 +9,9 @@ import (
 	"github.com/halqme/kei/internal/agent"
 	"github.com/halqme/kei/internal/auth"
 	"github.com/halqme/kei/internal/config"
+	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/extension"
-	"github.com/halqme/kei/internal/instruction"
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/skill"
 )
@@ -46,19 +46,19 @@ func makeSession(cfg config.Config, r *extension.Registry, id, workdir, provider
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt, err := instruction.Load(workdir, skills.CatalogPrompt())
+	contextBuilder, err := agentcontext.NewForWorkspace(workdir, skills.CatalogPrompt())
 	if err != nil {
 		return nil, err
 	}
 	return &agent.Session{
-		ID:           id,
-		Tools:        r.Tools,
-		Commands:     r.Commands,
-		Skills:       skills,
-		Controls:     control.New(cfg.Controls),
-		SystemPrompt: systemPrompt,
-		Workdir:      workdir,
-		Provider:     prov,
+		ID:             id,
+		Tools:          r.Tools,
+		Commands:       r.Commands,
+		Skills:         skills,
+		Controls:       control.New(cfg.Controls),
+		ContextBuilder: contextBuilder,
+		Workdir:        workdir,
+		Provider:       prov,
 	}, nil
 }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/skill"
 )
@@ -19,6 +20,9 @@ type skillProvider struct {
 func (p *skillProvider) Stream(_ context.Context, messages []provider.Message, tools []map[string]any, _ provider.StreamCallback) (provider.Result, error) {
 	p.t.Helper()
 	p.calls++
+	if len(messages) < 2 || messages[0].Role != "system" || messages[0].Content != "base" || messages[1].Role != "user" {
+		p.t.Fatalf("unexpected materialized context: %+v", messages)
+	}
 	switch p.calls {
 	case 1:
 		found := false
@@ -55,7 +59,7 @@ func (p *skillProvider) Stream(_ context.Context, messages []provider.Message, t
 	}
 }
 
-func TestSessionLoadsDiscoveredSkillThroughToolLoop(t *testing.T) {
+func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "skills")
 	dir := filepath.Join(root, "review")
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -70,12 +74,15 @@ func TestSessionLoadsDiscoveredSkillThroughToolLoop(t *testing.T) {
 	}
 
 	p := &skillProvider{t: t}
-	s := &Session{Provider: p, Skills: skills, SystemPrompt: "base"}
+	s := &Session{Provider: p, Skills: skills, ContextBuilder: agentcontext.New("base")}
 	got, err := s.Prompt(context.Background(), "review this")
 	if err != nil {
 		t.Fatalf("Prompt failed: %v", err)
 	}
 	if got != "done" {
 		t.Fatalf("unexpected response: %q", got)
+	}
+	if len(s.Messages) == 0 || s.Messages[0].Role != "user" {
+		t.Fatalf("session transcript contains materialized system context: %+v", s.Messages)
 	}
 }
