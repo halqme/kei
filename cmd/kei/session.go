@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -23,7 +24,33 @@ func discoverExtensions(cfg config.Config, workdir string) (*extension.Registry,
 	return extension.Discover(extension.SearchRoots(workdir, cfg.ExtensionDirs))
 }
 
-func makeSession(cfg config.Config, r *extension.Registry, id, workdir, providerOverride, modelOverride string) (*agent.Runtime, error) {
+func openSession(id, workdir string) (*keisession.State, keisession.Store, error) {
+	if id == "" {
+		return &keisession.State{ID: "cli", Workspace: workdir}, nil, nil
+	}
+	store, err := keisession.DefaultFileStore()
+	if err != nil {
+		return nil, nil, err
+	}
+	state, err := store.Load(id)
+	switch {
+	case err == nil:
+		return state, store, nil
+	case errors.Is(err, keisession.ErrNotFound):
+		state = &keisession.State{ID: id, Workspace: workdir}
+		if err := store.Create(state); err != nil {
+			return nil, nil, err
+		}
+		return state, store, nil
+	default:
+		return nil, nil, err
+	}
+}
+
+func makeRuntime(cfg config.Config, r *extension.Registry, state *keisession.State, store keisession.Store, providerOverride, modelOverride string) (*agent.Runtime, error) {
+	if state == nil {
+		return nil, errors.New("session state is nil")
+	}
 	if len(cfg.Providers) == 0 {
 		cfg = withAvailableProviders(cfg)
 	}
@@ -43,16 +70,17 @@ func makeSession(cfg config.Config, r *extension.Registry, id, workdir, provider
 	if err := requireProviderAuth(context.Background(), pCfg); err != nil {
 		return nil, err
 	}
-	skills, err := skill.Discover(skill.SearchRoots(workdir))
+	skills, err := skill.Discover(skill.SearchRoots(state.Workspace))
 	if err != nil {
 		return nil, err
 	}
-	contextBuilder, err := agentcontext.NewForWorkspace(workdir, skills.CatalogPrompt())
+	contextBuilder, err := agentcontext.NewForWorkspace(state.Workspace, skills.CatalogPrompt())
 	if err != nil {
 		return nil, err
 	}
 	return &agent.Runtime{
-		State:          &keisession.State{ID: id, Workspace: workdir},
+		State:          state,
+		Store:          store,
 		Tools:          r.Tools,
 		Commands:       r.Commands,
 		Skills:         skills,

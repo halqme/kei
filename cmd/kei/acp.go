@@ -7,6 +7,7 @@ import (
 
 	"github.com/halqme/kei/internal/acp"
 	"github.com/halqme/kei/internal/agent"
+	keisession "github.com/halqme/kei/internal/session"
 )
 
 func runACP(args []string) error {
@@ -26,7 +27,8 @@ func runACP(args []string) error {
 		if err != nil {
 			return nil, err
 		}
-		return makeSession(cfg, r, id, cwd, *prov, *model)
+		state := &keisession.State{ID: id, Workspace: cwd}
+		return makeRuntime(cfg, r, state, nil, *prov, *model)
 	})
 	return srv.Serve(context.Background())
 }

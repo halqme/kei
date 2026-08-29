@@ -21,6 +21,7 @@ type EventFunc func(kind string, payload any)
 
 type Runtime struct {
 	State          *session.State
+	Store          session.Store
 	Provider       provider.Provider
 	Tools          *tool.Registry
 	Commands       *keicommand.Registry
@@ -50,7 +51,9 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 		}
 	}
 
-	state.Transcript.AppendUser(text)
+	if err := r.appendEntry(transcript.Entry{Role: transcript.RoleUser, Content: text}); err != nil {
+		return "", err
+	}
 
 	for turn := 0; turn < 32; turn++ {
 		var tools []map[string]any
@@ -82,12 +85,19 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 				if event.Type == provider.StreamEventTextDelta && event.Text != "" {
 					r.OnEvent("assistant_message_chunk", map[string]any{"text": event.Text})
 				}
+			}
 		}
 		res, err := r.Provider.Generate(ctx, request, callback)
 		if err != nil {
 			return "", err
 		}
-		state.Transcript.AppendAssistant(res.Message.Content, transcriptToolCalls(res.Message.ToolCalls))
+		if err := r.appendEntry(transcript.Entry{
+			Role:      transcript.RoleAssistant,
+			Content:   res.Message.Content,
+			ToolCalls: transcriptToolCalls(res.Message.ToolCalls),
+		}); err != nil {
+			return "", err
+		}
 		if len(res.Message.ToolCalls) == 0 {
 			return contentString(res.Message.Content), nil
 		}
@@ -132,7 +142,9 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 				}
 				switch dec.Action {
 				case "deny":
-					state.Transcript.AppendTool(call.ID, "Denied: "+dec.Reason)
+					if err := r.appendEntry(transcript.Entry{Role: transcript.RoleTool, ToolCallID: call.ID, Content: "Denied: " + dec.Reason}); err != nil {
+						return "", err
+					}
 					continue
 				case "ask":
 					if r.Approve == nil {
@@ -143,7 +155,9 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 						return "", err
 					}
 					if !yes {
-						state.Transcript.AppendTool(call.ID, "Denied by user")
+						if err := r.appendEntry(transcript.Entry{Role: transcript.RoleTool, ToolCallID: call.ID, Content: "Denied by user"}); err != nil {
+							return "", err
+						}
 						continue
 					}
 				}
@@ -155,13 +169,25 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 			if err != nil {
 				out = "ERROR: " + err.Error() + "\n" + out
 			}
-			state.Transcript.AppendTool(call.ID, out)
+			if err := r.appendEntry(transcript.Entry{Role: transcript.RoleTool, ToolCallID: call.ID, Content: out}); err != nil {
+				return "", err
+			}
 			if r.Controls != nil {
 				_, _ = r.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: state.ID, Tool: toolName, Effects: effects, Input: input, Workdir: state.Workspace})
 			}
 		}
 	}
 	return "", fmt.Errorf("agent exceeded maximum turns")
+}
+
+func (r *Runtime) appendEntry(entry transcript.Entry) error {
+	if r.Store != nil {
+		if err := r.Store.Append(r.State.ID, entry); err != nil {
+			return fmt.Errorf("persist session %q: %w", r.State.ID, err)
+		}
+	}
+	r.State.Transcript.Append(entry)
+	return nil
 }
 
 func transcriptToolCalls(calls []provider.ToolCall) []transcript.ToolCall {
