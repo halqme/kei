@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/transcript"
 )
 
 func TestNewForWorkspaceComposesStableBase(t *testing.T) {
@@ -38,14 +38,14 @@ func TestNewForWorkspaceAllowsMissingAgentsFile(t *testing.T) {
 	}
 }
 
-func TestMaterializeKeepsInstructionsOutOfTail(t *testing.T) {
-	tail := []provider.Message{{Role: "user", Content: "hello"}}
+func TestMaterializeRendersTranscriptWithoutMutatingIt(t *testing.T) {
+	tail := []transcript.Entry{{Role: transcript.RoleUser, Content: "hello"}}
 	m := New("base").Materialize(tail, []map[string]any{{"type": "function"}}, "")
 
 	if len(m.Messages) != 2 || m.Messages[0].Role != "system" || m.Messages[0].Content != "base" || m.Messages[1].Role != "user" {
 		t.Fatalf("unexpected materialized messages: %+v", m.Messages)
 	}
-	if len(tail) != 1 || tail[0].Role != "user" {
+	if len(tail) != 1 || tail[0].Role != transcript.RoleUser {
 		t.Fatalf("materialization mutated transcript tail: %+v", tail)
 	}
 	if len(m.Tools) != 1 {
@@ -53,9 +53,30 @@ func TestMaterializeKeepsInstructionsOutOfTail(t *testing.T) {
 	}
 }
 
+func TestMaterializeRendersLogicalToolCallsForProvider(t *testing.T) {
+	tail := []transcript.Entry{{
+		Role:    transcript.RoleAssistant,
+		Content: "checking",
+		ToolCalls: []transcript.ToolCall{{
+			ID:        "call-1",
+			Name:      "search",
+			Arguments: `{"query":"hello"}`,
+		}},
+	}}
+
+	m := New("").Materialize(tail, nil, "")
+	if len(m.Messages) != 1 || len(m.Messages[0].ToolCalls) != 1 {
+		t.Fatalf("unexpected materialized tool call: %+v", m.Messages)
+	}
+	call := m.Messages[0].ToolCalls[0]
+	if call.ID != "call-1" || call.Type != "function" || call.Function.Name != "search" || call.Function.Arguments != `{"query":"hello"}` {
+		t.Fatalf("unexpected provider tool call: %+v", call)
+	}
+}
+
 func TestMaterializeInstructionReplacementIsRequestScoped(t *testing.T) {
 	b := New("base")
-	tail := []provider.Message{{Role: "user", Content: "hello"}}
+	tail := []transcript.Entry{{Role: transcript.RoleUser, Content: "hello"}}
 
 	replaced := b.Materialize(tail, nil, "temporary")
 	if replaced.Messages[0].Content != "temporary" {

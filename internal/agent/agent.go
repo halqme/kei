@@ -12,6 +12,7 @@ import (
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/skill"
 	"github.com/halqme/kei/internal/tool"
+	"github.com/halqme/kei/internal/transcript"
 )
 
 type ApprovalFunc func(ctx context.Context, toolName, reason string, input map[string]any) (bool, error)
@@ -26,7 +27,7 @@ type Session struct {
 	Controls       *control.Chain
 	ContextBuilder *agentcontext.Builder
 	Workdir        string
-	Messages       []provider.Message
+	Transcript     transcript.Transcript
 	Approve        ApprovalFunc
 	OnEvent        EventFunc
 }
@@ -45,7 +46,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 		}
 	}
 
-	s.Messages = append(s.Messages, provider.Message{Role: "user", Content: text})
+	s.Transcript.AppendUser(text)
 
 	for turn := 0; turn < 32; turn++ {
 		var tools []map[string]any
@@ -70,7 +71,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 			}
 		}
 
-		materialized := s.ContextBuilder.Materialize(s.Messages, tools, instructions)
+		materialized := s.ContextBuilder.Materialize(s.Transcript.Entries(), tools, instructions)
 		var callback provider.StreamCallback
 		if s.OnEvent != nil {
 			callback = func(event provider.StreamEvent) {
@@ -83,7 +84,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		s.Messages = append(s.Messages, res.Message)
+		s.Transcript.AppendAssistant(res.Message.Content, transcriptToolCalls(res.Message.ToolCalls))
 		if len(res.Message.ToolCalls) == 0 {
 			return contentString(res.Message.Content), nil
 		}
@@ -128,7 +129,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 				}
 				switch dec.Action {
 				case "deny":
-					s.Messages = append(s.Messages, provider.Message{Role: "tool", ToolCallID: call.ID, Content: "Denied: " + dec.Reason})
+					s.Transcript.AppendTool(call.ID, "Denied: "+dec.Reason)
 					continue
 				case "ask":
 					if s.Approve == nil {
@@ -139,7 +140,7 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 						return "", err
 					}
 					if !yes {
-						s.Messages = append(s.Messages, provider.Message{Role: "tool", ToolCallID: call.ID, Content: "Denied by user"})
+						s.Transcript.AppendTool(call.ID, "Denied by user")
 						continue
 					}
 				}
@@ -151,13 +152,25 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 			if err != nil {
 				out = "ERROR: " + err.Error() + "\n" + out
 			}
-			s.Messages = append(s.Messages, provider.Message{Role: "tool", ToolCallID: call.ID, Content: out})
+			s.Transcript.AppendTool(call.ID, out)
 			if s.Controls != nil {
 				_, _ = s.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: s.ID, Tool: toolName, Effects: effects, Input: input, Workdir: s.Workdir})
 			}
 		}
 	}
 	return "", fmt.Errorf("agent exceeded maximum turns")
+}
+
+func transcriptToolCalls(calls []provider.ToolCall) []transcript.ToolCall {
+	out := make([]transcript.ToolCall, len(calls))
+	for i, call := range calls {
+		out[i] = transcript.ToolCall{
+			ID:        call.ID,
+			Name:      call.Function.Name,
+			Arguments: call.Function.Arguments,
+		}
+	}
+	return out
 }
 
 func filterTools(in []map[string]any, hidden []string) []map[string]any {

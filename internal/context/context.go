@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/transcript"
 )
 
 const basePrompt = "You are a coding agent. Use tools when they help you complete the task."
@@ -52,7 +53,7 @@ func (b *Builder) BaseInstructions() string {
 	return b.baseInstructions
 }
 
-func (b *Builder) Materialize(tail []provider.Message, tools []map[string]any, instructions string) Materialized {
+func (b *Builder) Materialize(tail []transcript.Entry, tools []map[string]any, instructions string) Materialized {
 	if instructions == "" {
 		instructions = b.BaseInstructions()
 	}
@@ -61,7 +62,24 @@ func (b *Builder) Materialize(tail []provider.Message, tools []map[string]any, i
 	if instructions != "" {
 		messages = append(messages, provider.Message{Role: "system", Content: instructions})
 	}
-	messages = append(messages, tail...)
+	for _, entry := range tail {
+		message := provider.Message{
+			Role:       string(entry.Role),
+			Content:    entry.Content,
+			ToolCallID: entry.ToolCallID,
+		}
+		for _, call := range entry.ToolCalls {
+			message.ToolCalls = append(message.ToolCalls, provider.ToolCall{
+				ID:   call.ID,
+				Type: "function",
+				Function: provider.FunctionCall{
+					Name:      call.Name,
+					Arguments: call.Arguments,
+				},
+			})
+		}
+		messages = append(messages, message)
+	}
 
 	return Materialized{
 		Messages: messages,
