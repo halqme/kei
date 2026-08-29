@@ -77,6 +77,8 @@ func printRunHelp() {
 	fmt.Println("        model override or alias (e.g. gpt-5.5, claude-3-7-sonnet, fast)")
 	fmt.Println("  -provider string")
 	fmt.Println("        connection target override (e.g. openai, claude, codex, local)")
+	fmt.Println("  -session string")
+	fmt.Println("        persistent session ID (load if it exists, create otherwise)")
 	fmt.Println()
 	fmt.Println("Interactive REPL commands:")
 	fmt.Println("  /help             Show REPL help and available slash commands")
