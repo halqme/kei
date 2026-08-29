@@ -1,8 +1,8 @@
 # Sessions
 
-A `kei` session is the durable logical conversation that a runtime continues over time.
+A `kei` session is the logical conversation that a runtime continues over time.
 
-The current implementation keeps that state in memory inside `internal/agent.Session`. Persistence, resume, and compaction are not implemented yet. This document defines the boundary they should follow so those features do not make the session dependent on one provider, cache implementation, or frontend.
+The current implementation now separates that logical state into `internal/session.State` and executes it through `internal/agent.Runtime`. Both remain in memory: persistence, resume, checkpoints, and compaction are not implemented yet. This document defines the boundaries those features should follow so session state does not become dependent on one provider, cache implementation, frontend, or process lifetime.
 
 The central rule is:
 
@@ -42,41 +42,46 @@ Session handling has four conceptually separate layers:
 
 The layers have different lifetimes and guarantees.
 
-- **Transcript** is the canonical conversation history.
+- **Session state** is the logical conversation identity, associated metadata, and canonical transcript.
 - **Context state** is a materialized projection of that history for model inference.
 - **Provider continuation state** is an optional provider-specific shortcut.
 - **Prompt or KV cache state** is an ephemeral optimization.
 
 Losing provider continuation or cache state must never make a session unreadable or logically unresumable.
 
-## Session and runtime are different things
+## Session state and runtime are different things
 
-The current `internal/agent.Session` still contains both logical session state and runtime dependencies: provider, tools, commands, skills, controls, callbacks, workdir, a context builder, and an in-memory transcript.
+The current code now makes this separation explicit.
 
-Persistent sessions should not serialize that object.
-
-The durable session should contain logical conversation state and small pieces of metadata needed to identify it. Runtime state should be rebuilt when the session is opened from the current configuration, credentials, extension discovery, controls, provider selection, and frontend.
-
-Conceptually:
+`internal/session.State` contains only logical session-associated state:
 
 ```text
-session.Session
-    identity
-    metadata
-    transcript
-    checkpoints
+session.State
+    ID
+    Workspace
+    Transcript
+```
 
+`internal/agent.Runtime` contains the execution dependencies used to continue that state:
+
+```text
 agent.Runtime
+    State *session.State
     provider
     tools
     commands
+    skills
     controls
     context builder
-    session store
-    approval / frontend callbacks
+    approval callback
+    frontend/event callback
 ```
 
-This separation allows the same logical session to be resumed in a new process and, where the context can be represented portably, continued with a different model or provider.
+The runtime requires a session state, but the session state does not depend on the runtime.
+
+That direction is deliberate. A future session store may persist the state after a durable schema is defined, while a newly opened runtime should rebuild provider clients, credentials, extension discovery, controls, Skills, context construction, and frontend callbacks from the current environment.
+
+`State` itself is not yet a stable serialized format. In particular, the transcript still contains opaque in-memory content values. The current split establishes ownership and lifetime; it does not commit the project to a storage encoding prematurely.
 
 A session is therefore not a snapshot of an execution environment.
 
@@ -95,9 +100,9 @@ assistant message
 ...
 ```
 
-`internal/transcript` now owns this in-memory logical history. Its entries distinguish user, assistant, and tool roles plus provider-independent tool-call identity, name, arguments, and result linkage. It deliberately has no system role: runtime instructions are context, not conversation history.
+`internal/transcript` owns this in-memory logical history. Its entries distinguish user, assistant, and tool roles plus provider-independent tool-call identity, name, arguments, and result linkage. It deliberately has no system role: runtime instructions are context, not conversation history.
 
-Provider transport types are not the transcript schema. `provider.Message`, `provider.ToolCall`, and `provider.FunctionCall` remain request/response representations at the provider boundary. The agent converts provider results into logical transcript entries, and the context builder renders transcript entries back into the current provider message shape for inference.
+Provider transport types are not the transcript schema. `provider.Message`, `provider.ToolCall`, and `provider.FunctionCall` remain request/response representations at the provider boundary. The agent runtime converts provider results into logical transcript entries, and the context builder renders transcript entries back into the current provider message shape for inference.
 
 The first transcript seam is intentionally not a persistence format. `Entry.Content` remains an opaque in-memory value so this refactor does not invent a durable multimodal/content schema before persistence actually requires one. A future session store must define serialization and compatibility explicitly rather than assuming the current Go field shape is stable storage.
 
@@ -141,7 +146,7 @@ The base contains long-lived model input that normally changes less often than c
 
 The exact provider representation is transport-specific.
 
-The current `internal/context.Builder` implements the first narrow form of this boundary. At session creation it assembles stable instructions from:
+The current `internal/context.Builder` implements the first narrow form of this boundary. At runtime creation it assembles stable instructions from:
 
 1. kei's small built-in coding-agent instruction;
 2. `<workspace>/AGENTS.md`, when present;
@@ -164,7 +169,7 @@ Each immediate non-hidden child directory is a Skill candidate. A candidate with
 
 Only Skill names and descriptions are placed in the stable base instructions. Full Skill instructions remain progressively disclosed: the model can call `load_skill` to read a selected `SKILL.md`, then `read_skill_resource` to read referenced files under that Skill directory. Resource reads reject paths that escape the Skill root.
 
-Those Skill readers are model-facing built-ins rather than extension processes, but they pass through the same session tool lifecycle events and control/approval path as ordinary tools.
+Those Skill readers are model-facing built-ins rather than extension processes, but they pass through the same runtime tool lifecycle events and control/approval path as ordinary tools.
 
 ### Checkpoints
 
@@ -290,7 +295,7 @@ The context builder currently has to flatten its materialized context into that 
 
 Persistent sessions and compaction will likely require the provider boundary to accept a request-level representation rather than a bare message slice. The core should still avoid implementing a universal AST for every provider-native object. Portable conversation state belongs in the transcript/context model; opaque provider-native continuation or compaction state should remain provider-owned data carried through an explicit seam.
 
-This is a design direction, not the current implementation contract.
+This is now the next major architectural seam after the session/runtime split. It should be formed before provider cache or continuation policy is added.
 
 ## Provider telemetry
 
@@ -317,35 +322,36 @@ Only one model turn should mutate a session at a time. Parallel work that requir
 
 This rule also gives persistence, checkpoint coverage, tool-call recovery, and provider prefix reuse a deterministic ordering.
 
-The current ACP server processes requests concurrently and keeps sessions in memory. Persistent session work must therefore add per-session serialization rather than relying only on the server map mutex.
+The current ACP server processes requests concurrently and keeps active runtimes in memory. Persistent session work must therefore add per-session serialization rather than relying only on the server map mutex.
 
 ## Workspace semantics
 
-The workspace remains runtime context associated with the session.
+The workspace path is currently session-associated metadata stored as `session.State.Workspace`.
 
-Currently `Session.Workdir` is:
+The active runtime uses it as:
 
 - the cwd of tool and slash-command child processes;
-- included in control events and used by control child processes as cwd;
-- the root from which ACP sessions discover workspace-local extensions;
-- the root used to read `AGENTS.md` and discover project Agent Skills when constructing the session runtime.
+- the workdir included in control events and used by control child processes as cwd;
+- the root from which ACP session creation discovers workspace-local extensions;
+- the root used to read `AGENTS.md` and discover project Agent Skills when constructing the runtime.
 
-A persistent session may record its workspace path as metadata, but reopening the session should rediscover current instructions, Skills, tools, commands, and controls rather than deserialize old runtime registries.
+Recording the workspace path in logical state does not mean runtime discovery results are durable. Reopening a future persisted session should use the recorded workspace as the starting point, then rediscover current instructions, Skills, tools, commands, controls, and provider configuration rather than deserialize old runtime registries.
 
 ## Current implementation
 
-Today `internal/agent.Session` owns an in-memory `transcript.Transcript` and drives the model/tool loop, while `internal/context.Builder` owns provider-context materialization.
+Today `internal/session.State` owns the session ID, workspace path, and in-memory `transcript.Transcript`. `internal/agent.Runtime` owns the dependencies and callbacks needed to execute turns against that state. `internal/context.Builder` owns provider-context materialization.
 
-For ordinary user text it:
+For ordinary user text, the runtime:
 
-1. appends a user entry to the transcript;
-2. collects the extension-tool and Skill-reader schemas visible to the runtime;
-3. applies `before_model` controls to the stable instructions and tool availability for the current turn;
-4. asks the context builder to render transcript entries plus runtime instructions into provider messages and tools;
-5. calls `Provider.Stream`;
-6. converts the completed provider result into an assistant transcript entry;
-7. returns when there are no tool calls;
-8. otherwise executes tool calls and appends tool-result entries before repeating.
+1. requires a `session.State`;
+2. appends a user entry to `State.Transcript`;
+3. collects the extension-tool and Skill-reader schemas visible to the runtime;
+4. applies `before_model` controls using `State.ID` and `State.Workspace`;
+5. asks the context builder to render transcript entries plus runtime instructions into provider messages and tools;
+6. calls `Provider.Stream`;
+7. converts the completed provider result into an assistant transcript entry;
+8. returns when there are no tool calls;
+9. otherwise executes tool calls and appends tool-result entries before repeating.
 
 The materialized system message is not appended to the transcript. Provider tool-call transport fields are also not stored wholesale: the transcript keeps the logical call ID, name, arguments, and result linkage needed to reconstruct the conversation.
 
@@ -355,7 +361,7 @@ Discovered slash commands are executed directly before ordinary model input hand
 
 Tool execution errors are converted into tool-result text so the model can react on the next turn. Provider failures, malformed tool arguments, unknown requested tools, control failures, and approval plumbing failures stop the prompt.
 
-The session emits frontend lifecycle events through `OnEvent`:
+The runtime emits frontend lifecycle events through `OnEvent`:
 
 ```text
 command_start
@@ -365,15 +371,15 @@ tool_end
 assistant_message_chunk
 ```
 
-ACP currently creates only in-memory sessions and advertises no session-loading capability.
+ACP currently maps protocol session IDs to active in-memory `agent.Runtime` values and advertises no session-loading capability. The logical state is reachable through each runtime's `State`; there is no session store yet.
 
 ## Implementation direction
 
-The context-builder and transcript seams now exist, but persistence should still be introduced without prematurely coupling storage, compaction, and providers:
+The context-builder, transcript, and session/runtime ownership seams now exist. Persistence should still be introduced without prematurely coupling storage, compaction, and providers:
 
-1. separate durable session identity/metadata from the agent runtime and decide the persistent transcript content schema when storage actually requires it;
-2. evolve the provider request boundary so materialized base/checkpoint/tail/volatile regions and optional provider state do not have to be flattened too early;
-3. add a persistent session store and resume path around the logical transcript;
+1. evolve the provider request boundary so materialized base/checkpoint/tail/volatile regions and optional provider state do not have to be flattened too early;
+2. define the durable transcript/content encoding needed by storage and add a persistent session store plus resume path;
+3. add per-session serialization for concurrent frontends/runtimes;
 4. expose provider usage and cache telemetry;
 5. add checkpoint storage;
 6. extend the context builder to select compatible checkpoints and uncovered transcript tail;
@@ -385,14 +391,15 @@ Do not make session persistence depend on a compaction algorithm, and do not mak
 
 The intended session design can be summarized by these invariants:
 
-1. A session is logical conversation state, not provider state.
-2. The transcript is canonical and append-only.
-3. Provider transport structs are not canonical transcript state.
-4. Runtime instructions are not transcript history.
-5. Context is a materialized projection of transcript plus runtime environment.
-6. Compaction produces replaceable checkpoints rather than rewritten history.
-7. Provider continuation and prompt caches are accelerators, never sources of truth.
-8. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
-9. A session has one linear mutation stream at a time.
+1. A session is logical conversation state, not provider/runtime state.
+2. Runtime dependencies can be rebuilt around the same logical session state.
+3. The transcript is canonical and append-only.
+4. Provider transport structs are not canonical transcript state.
+5. Runtime instructions are not transcript history.
+6. Context is a materialized projection of transcript plus runtime environment.
+7. Compaction produces replaceable checkpoints rather than rewritten history.
+8. Provider continuation and prompt caches are accelerators, never sources of truth.
+9. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
+10. A session has one linear mutation stream at a time.
 
 These rules should remain true even as the storage format, compaction strategy, provider APIs, or frontend capabilities evolve.

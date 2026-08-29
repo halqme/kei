@@ -7,7 +7,7 @@ This guide expands the repository workflow in `AGENTS.md` for people changing th
 ```text
 cmd/kei              CLI and REPL entry points
 internal/acp          ACP server and wire projection
-internal/agent        session/model/tool orchestration
+internal/agent        runtime/model/tool orchestration
 internal/auth         credential store and provider auth flows
 internal/command      slash-command descriptors and execution
 internal/config       configuration schema and persistence
@@ -15,6 +15,7 @@ internal/context      model-context materialization from runtime instructions an
 internal/control      external control process chain
 internal/extension    extension discovery and namespacing
 internal/provider     provider interface and transports
+internal/session      logical session identity, workspace metadata, and transcript ownership
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, and execution
 internal/transcript   provider-independent logical conversation history
@@ -45,10 +46,11 @@ go build -o ./build/kei ./cmd/kei
 Use focused tests while iterating, for example:
 
 ```sh
+go test ./internal/session
 go test ./internal/transcript
 go test ./internal/context
-go test ./internal/extension
-go test ./internal/tool
+go test ./internal/agent
+go test ./internal/acp
 go test ./cmd/kei
 ```
 
@@ -70,19 +72,21 @@ For Agent Skills, test the project/user root precedence, required `SKILL.md` met
 
 For workspace instructions and context materialization, test root `AGENTS.md` composition, the absent-file case, and the boundary that keeps runtime instructions out of the transcript. Nested instruction scoping is not part of the current contract.
 
-For transcripts, test logical entry ordering and tool-call/result linkage. Keep provider serialization details out of `internal/transcript`; the context layer owns rendering logical entries into the current provider request shape.
+For transcript behavior, test logical ordering and the provider-independent information needed to reconstruct user, assistant, tool-call, and tool-result history. Do not turn transport fields into transcript fields merely because one provider exposes them.
+
+For session/runtime ownership, test the actual boundary: `session.State` carries logical state, while `agent.Runtime` requires that state and carries execution dependencies. Persistence encoding is not part of this contract yet.
 
 For tools, test schema defaults, required/optional placeholders, array expansion, stdin JSON, timeout behavior, PATH lookup, extension-relative executables, workspace cwd, stderr, and non-zero exits as relevant to the change.
 
-For slash commands, test invocation parsing separately from process execution. Unknown slash-prefixed text is session behavior and should remain a prompt when no discovered command matches.
+For slash commands, test invocation parsing separately from process execution. Unknown slash-prefixed text is runtime behavior and should remain a prompt when no discovered command matches.
 
 For configuration, test lookup order, explicit versus implicit paths, creation permissions, non-overwrite behavior, ordered provider resolution, aliases, and errors.
 
 For provider transports, keep HTTP/JSON/SSE translation tests inside `internal/provider`. Agent tests should focus on provider-independent orchestration.
 
-For controls, test chain ordering and decision accumulation/short-circuit behavior separately from session reactions to `allow`, `deny`, and `ask`.
+For controls, test chain ordering and decision accumulation/short-circuit behavior separately from runtime reactions to `allow`, `deny`, and `ask`.
 
-For ACP, test JSON-RPC parsing and ACP projection in `internal/acp`; avoid encoding ACP-specific assumptions into provider or agent tests.
+For ACP, test JSON-RPC parsing and ACP projection in `internal/acp`; avoid encoding ACP-specific assumptions into session, provider, or transcript packages.
 
 ## Cross-package paths worth tracing first
 
@@ -109,27 +113,28 @@ A slash-command descriptor field follows the analogous path through `internal/co
 ```text
 provider transport
   -> provider.Stream / StreamEvent
-  -> agent Session.OnEvent
+  -> context rendering
+  -> agent Runtime.OnEvent
   -> REPL and/or ACP projection
 ```
 
 Do not infer streaming guarantees from one provider implementation. The provider interface must represent any guarantee relied upon by agent/frontends.
 
-### Transcript changes
+### Session-state changes
 
 ```text
-provider result
-  -> internal/agent
-  -> internal/transcript
-  -> internal/context materialization
-  -> provider request
+session.State
+  -> agent.Runtime
+  -> context materialization
+  -> CLI/ACP runtime creation
+  -> future store/resume boundary
 ```
 
-`internal/transcript` owns logical conversation facts. `internal/context` owns the current conversion back into `provider.Message`; do not move provider request fields into transcript state merely to avoid that conversion.
+Do not put a provider client, extension registry, control chain, context builder, credential, or frontend callback into logical session state. A runtime should be reconstructible around the state.
 
 ### Workspace changes
 
-Workspace/cwd behavior crosses extension search roots, root `AGENTS.md`, project Skill discovery, context construction, process working directories, CLI session creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
+Workspace/cwd behavior crosses session metadata, extension search roots, root `AGENTS.md`, project Skill discovery, context construction, process working directories, CLI runtime creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
 
 ### Naming changes
 
@@ -140,7 +145,7 @@ Tool and command names appear in extension loading, registries, model-facing con
 Update docs with behavior changes, not as a cleanup after the code has already diverged.
 
 - `docs/configuration.md` owns config/auth-facing contracts.
-- `docs/session.md` owns orchestration, transcript/context boundaries, workspace instructions, and Agent Skills semantics.
+- `docs/session.md` owns logical session state, runtime ownership, transcript/context materialization, workspace instructions, and Agent Skills semantics.
 - `docs/extension/*` owns declarations/discovery/execution contracts.
 - `docs/acp.md` owns ACP behavior.
 - `docs/architecture.md` owns rationale and core-versus-external boundaries.

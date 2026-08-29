@@ -9,7 +9,7 @@ This file describes how to change `kei`. Product concepts and public contracts b
 3. Decide whether the behavior belongs in the Go control plane at all. Prefer an extension process, descriptor, control, or existing Unix command when that keeps the core smaller.
 4. For Go changes, follow `.agents/skills/use-modern-go/SKILL.md` before editing the relevant Go files.
 
-Start from the narrowest package that can own the change. Avoid routing unrelated behavior through `internal/agent` just because every session eventually passes through it.
+Start from the narrowest package that can own the change. Avoid routing unrelated behavior through `internal/agent` just because every session eventually passes through the runtime.
 
 ## Go and library policy
 
@@ -26,7 +26,7 @@ Use the existing package boundary as the first routing decision:
 ```text
 cmd/kei              CLI parsing, help, REPL wiring, command entry points
 internal/acp          ACP JSON-RPC/frontend projection
-internal/agent        session orchestration and model/tool loop
+internal/agent        runtime orchestration and model/tool loop
 internal/auth         credential storage and provider authentication
 internal/command      slash-command descriptors, parsing, execution
 internal/config       config schema, lookup, creation, persistence
@@ -34,6 +34,7 @@ internal/context      model-context materialization from runtime instructions an
 internal/control      generic external control chain
 internal/extension    extension roots, discovery, shadowing, namespacing
 internal/provider     provider interface and provider transports
+internal/session      logical session identity, workspace metadata, and transcript ownership
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, argv/stdin execution
 internal/transcript   provider-independent logical conversation history
@@ -104,7 +105,7 @@ When changing workspace instructions or Agent Skills, cover the affected root pr
 
 When changing context materialization, cover the boundary between runtime instructions and transcript history; request-scoped instruction changes must not rewrite canonical conversation state.
 
-When changing transcript behavior, cover logical entry ordering and tool-call/result linkage without making provider transport structs part of the transcript contract.
+When changing session/runtime ownership, keep logical identity, workspace metadata, and transcript state under `internal/session`, and prove that runtime dependencies can be rebuilt around that state rather than becoming fields of the durable session model.
 
 When changing tool or slash-command execution, cover the relevant combination of `PATH` lookup, extension-relative executable resolution, workspace cwd, stdin mode, placeholders/defaults, timeout/cancellation, stderr, and non-zero exit behavior.
 
@@ -112,7 +113,7 @@ When changing configuration or provider selection, cover ordering, explicit over
 
 When changing provider transports, keep transport-specific serialization/parsing tests in `internal/provider`; do not make agent-loop tests prove HTTP details.
 
-When changing ACP, keep protocol parsing/projection tests in `internal/acp` and session semantics in `internal/agent` where possible.
+When changing ACP, keep protocol parsing/projection tests in `internal/acp` and runtime/session semantics in their owning packages where possible.
 
 These are behavioral boundaries to cover when they are affected, not a checklist that requires a new test file or a new test case for every edit.
 
@@ -154,8 +155,9 @@ Preserve these unless the task explicitly changes the contract and the correspon
 - Tools, slash commands, skills, and controls are separate concepts.
 - Agent Skills use the standard `SKILL.md` contract; kei does not add a parallel Skill descriptor format.
 - Workspace-specific agent instructions come from root `AGENTS.md`; persistent natural-language instructions are not config fields.
+- Logical session state owns identity, workspace metadata, and transcript; provider clients, tools, controls, context builders, and frontend callbacks belong to the agent runtime.
 - Runtime instructions are materialized into provider context and are not canonical transcript entries.
-- Canonical conversation history uses `internal/transcript`; `provider.Message` is a provider request/response representation, not session state.
+- Provider transport structs are not canonical transcript state.
 - Tool `effects` are policy/UX metadata, not a security boundary.
 - ACP is a frontend adapter, not the internal data model.
 - Credentials stay in the auth store or environment; generated configuration does not contain secrets.
@@ -168,10 +170,10 @@ The rationale and public description of these invariants live in `docs/architect
 A change that alters a seam should be treated as cross-cutting even if the diff begins in one package. In particular:
 
 - Descriptor schema changes usually touch descriptor parsing, execution, examples, docs, and tests.
-- Provider stream changes usually touch `internal/provider`, `internal/agent`, and frontend projection.
-- Transcript changes usually touch `internal/transcript`, `internal/context`, `internal/agent`, and session docs.
-- New control decisions usually touch the control protocol, context materialization, session behavior, approval behavior, and docs.
-- Workspace semantics usually touch discovery, context, process cwd, ACP session creation, CLI wiring, and tests.
+- Provider stream changes usually touch `internal/provider`, `internal/context`, `internal/agent`, and frontend projection.
+- Session-state changes usually touch `internal/session`, `internal/agent`, persistence/resume code when present, and ACP lifecycle handling.
+- New control decisions usually touch the control protocol, context materialization, runtime behavior, approval behavior, and docs.
+- Workspace semantics usually touch session metadata, discovery, context, process cwd, ACP session creation, CLI wiring, and tests.
 - Naming changes usually touch extension discovery, registries, provider function-name conversion, CLI inspection, ACP command advertisement, docs, and examples.
 
 Trace these paths before coding instead of fixing downstream breakage one package at a time.
