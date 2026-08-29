@@ -10,6 +10,7 @@ import (
 	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/session"
 	"github.com/halqme/kei/internal/skill"
 	"github.com/halqme/kei/internal/tool"
 	"github.com/halqme/kei/internal/transcript"
@@ -18,48 +19,51 @@ import (
 type ApprovalFunc func(ctx context.Context, toolName, reason string, input map[string]any) (bool, error)
 type EventFunc func(kind string, payload any)
 
-type Session struct {
-	ID             string
+type Runtime struct {
+	State          *session.State
 	Provider       provider.Provider
 	Tools          *tool.Registry
 	Commands       *keicommand.Registry
 	Skills         *skill.Registry
 	Controls       *control.Chain
 	ContextBuilder *agentcontext.Builder
-	Workdir        string
-	Transcript     transcript.Transcript
 	Approve        ApprovalFunc
 	OnEvent        EventFunc
 }
 
-func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
-	if name, arguments, ok := keicommand.ParseInvocation(text); ok && s.Commands != nil {
-		if d, found := s.Commands.Get(name); found {
-			if s.OnEvent != nil {
-				s.OnEvent("command_start", map[string]any{"name": d.QualifiedName, "arguments": arguments})
+func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
+	if r.State == nil {
+		return "", fmt.Errorf("agent runtime has no session state")
+	}
+	state := r.State
+
+	if name, arguments, ok := keicommand.ParseInvocation(text); ok && r.Commands != nil {
+		if d, found := r.Commands.Get(name); found {
+			if r.OnEvent != nil {
+				r.OnEvent("command_start", map[string]any{"name": d.QualifiedName, "arguments": arguments})
 			}
-			out, err := keicommand.Execute(ctx, s.Workdir, d, arguments)
-			if s.OnEvent != nil {
-				s.OnEvent("command_end", map[string]any{"name": d.QualifiedName, "output": out, "error": errString(err)})
+			out, err := keicommand.Execute(ctx, state.Workspace, d, arguments)
+			if r.OnEvent != nil {
+				r.OnEvent("command_end", map[string]any{"name": d.QualifiedName, "output": out, "error": errString(err)})
 			}
 			return out, err
 		}
 	}
 
-	s.Transcript.AppendUser(text)
+	state.Transcript.AppendUser(text)
 
 	for turn := 0; turn < 32; turn++ {
 		var tools []map[string]any
-		if s.Tools != nil {
-			tools = s.Tools.OpenAITools()
+		if r.Tools != nil {
+			tools = r.Tools.OpenAITools()
 		}
-		if s.Skills != nil {
-			tools = append(tools, s.Skills.OpenAITools()...)
+		if r.Skills != nil {
+			tools = append(tools, r.Skills.OpenAITools()...)
 		}
 
-		instructions := s.ContextBuilder.BaseInstructions()
-		if s.Controls != nil {
-			d, err := s.Controls.Apply(ctx, control.Event{Kind: "before_model", SessionID: s.ID, SystemPrompt: instructions, Workdir: s.Workdir})
+		instructions := r.ContextBuilder.BaseInstructions()
+		if r.Controls != nil {
+			d, err := r.Controls.Apply(ctx, control.Event{Kind: "before_model", SessionID: state.ID, SystemPrompt: instructions, Workdir: state.Workspace})
 			if err != nil {
 				return "", err
 			}
@@ -71,20 +75,20 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 			}
 		}
 
-		materialized := s.ContextBuilder.Materialize(s.Transcript.Entries(), tools, instructions)
+		materialized := r.ContextBuilder.Materialize(state.Transcript.Entries(), tools, instructions)
 		var callback provider.StreamCallback
-		if s.OnEvent != nil {
+		if r.OnEvent != nil {
 			callback = func(event provider.StreamEvent) {
 				if event.Type == provider.StreamEventTextDelta && event.Text != "" {
-					s.OnEvent("assistant_message_chunk", map[string]any{"text": event.Text})
+					r.OnEvent("assistant_message_chunk", map[string]any{"text": event.Text})
 				}
 			}
 		}
-		res, err := s.Provider.Stream(ctx, materialized.Messages, materialized.Tools, callback)
+		res, err := r.Provider.Stream(ctx, materialized.Messages, materialized.Tools, callback)
 		if err != nil {
 			return "", err
 		}
-		s.Transcript.AppendAssistant(res.Message.Content, transcriptToolCalls(res.Message.ToolCalls))
+		state.Transcript.AppendAssistant(res.Message.Content, transcriptToolCalls(res.Message.ToolCalls))
 		if len(res.Message.ToolCalls) == 0 {
 			return contentString(res.Message.Content), nil
 		}
@@ -100,61 +104,61 @@ func (s *Session) Prompt(ctx context.Context, text string) (string, error) {
 			toolName := call.Function.Name
 			var effects []string
 			var execute func() (string, error)
-			if s.Skills != nil && s.Skills.HandlesTool(call.Function.Name) {
+			if r.Skills != nil && r.Skills.HandlesTool(call.Function.Name) {
 				execute = func() (string, error) {
-					return s.Skills.Execute(call.Function.Name, input)
+					return r.Skills.Execute(call.Function.Name, input)
 				}
 			} else {
-				if s.Tools == nil {
+				if r.Tools == nil {
 					return "", fmt.Errorf("model requested unknown tool %q", call.Function.Name)
 				}
-				d, ok := s.Tools.Get(call.Function.Name)
+				d, ok := r.Tools.Get(call.Function.Name)
 				if !ok {
 					return "", fmt.Errorf("model requested unknown tool %q", call.Function.Name)
 				}
 				toolName = d.QualifiedName
 				effects = d.Effects
 				execute = func() (string, error) {
-					return tool.Execute(ctx, s.Workdir, d, input)
+					return tool.Execute(ctx, state.Workspace, d, input)
 				}
 			}
 
-			if s.OnEvent != nil {
-				s.OnEvent("tool_start", map[string]any{"name": toolName, "input": input})
+			if r.OnEvent != nil {
+				r.OnEvent("tool_start", map[string]any{"name": toolName, "input": input})
 			}
-			if s.Controls != nil {
-				dec, err := s.Controls.Apply(ctx, control.Event{Kind: "before_tool", SessionID: s.ID, Tool: toolName, Effects: effects, Input: input, Workdir: s.Workdir})
+			if r.Controls != nil {
+				dec, err := r.Controls.Apply(ctx, control.Event{Kind: "before_tool", SessionID: state.ID, Tool: toolName, Effects: effects, Input: input, Workdir: state.Workspace})
 				if err != nil {
 					return "", err
 				}
 				switch dec.Action {
 				case "deny":
-					s.Transcript.AppendTool(call.ID, "Denied: "+dec.Reason)
+					state.Transcript.AppendTool(call.ID, "Denied: "+dec.Reason)
 					continue
 				case "ask":
-					if s.Approve == nil {
+					if r.Approve == nil {
 						return "", fmt.Errorf("tool %s requires approval but no approval frontend is available", toolName)
 					}
-					yes, err := s.Approve(ctx, toolName, dec.Reason, input)
+					yes, err := r.Approve(ctx, toolName, dec.Reason, input)
 					if err != nil {
 						return "", err
 					}
 					if !yes {
-						s.Transcript.AppendTool(call.ID, "Denied by user")
+						state.Transcript.AppendTool(call.ID, "Denied by user")
 						continue
 					}
 				}
 			}
 			out, err := execute()
-			if s.OnEvent != nil {
-				s.OnEvent("tool_end", map[string]any{"name": toolName, "output": out, "error": errString(err)})
+			if r.OnEvent != nil {
+				r.OnEvent("tool_end", map[string]any{"name": toolName, "output": out, "error": errString(err)})
 			}
 			if err != nil {
 				out = "ERROR: " + err.Error() + "\n" + out
 			}
-			s.Transcript.AppendTool(call.ID, out)
-			if s.Controls != nil {
-				_, _ = s.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: s.ID, Tool: toolName, Effects: effects, Input: input, Workdir: s.Workdir})
+			state.Transcript.AppendTool(call.ID, out)
+			if r.Controls != nil {
+				_, _ = r.Controls.Apply(ctx, control.Event{Kind: "after_tool", SessionID: state.ID, Tool: toolName, Effects: effects, Input: input, Workdir: state.Workspace})
 			}
 		}
 	}
