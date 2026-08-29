@@ -105,6 +105,56 @@ func TestRuntimeUsesSessionStateForMaterializedContext(t *testing.T) {
 	}
 }
 
+type recordingStore struct {
+	entries []transcript.Entry
+}
+
+func (s *recordingStore) Create(*session.State) error { return nil }
+func (s *recordingStore) Load(string) (*session.State, error) {
+	return nil, session.ErrNotFound
+}
+func (s *recordingStore) Append(_ string, entry transcript.Entry) error {
+	s.entries = append(s.entries, entry)
+	return nil
+}
+
+type missingToolProvider struct{}
+
+func (missingToolProvider) Generate(_ context.Context, _ agentcontext.Request, _ provider.StreamCallback) (provider.Result, error) {
+	return provider.Result{Message: provider.Message{
+		Role: "assistant",
+		ToolCalls: []provider.ToolCall{{
+			ID:   "call-1",
+			Type: "function",
+			Function: provider.FunctionCall{
+				Name:      "missing",
+				Arguments: `{}`,
+			},
+		}},
+	}}, nil
+}
+
+func TestRuntimePersistsAssistantToolCallBeforeExecution(t *testing.T) {
+	store := &recordingStore{}
+	state := &session.State{ID: "durable", Workspace: t.TempDir()}
+	runtime := &Runtime{State: state, Store: store, Provider: missingToolProvider{}}
+
+	_, err := runtime.Prompt(context.Background(), "use a tool")
+	if err == nil || !strings.Contains(err.Error(), "unknown tool") {
+		t.Fatalf("Prompt error = %v, want unknown tool", err)
+	}
+	if len(store.entries) != 2 {
+		t.Fatalf("persisted %d entries, want user + assistant tool call: %+v", len(store.entries), store.entries)
+	}
+	assistant := store.entries[1]
+	if assistant.Role != transcript.RoleAssistant || len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call-1" {
+		t.Fatalf("assistant tool call was not persisted before execution: %+v", assistant)
+	}
+	if got := state.Transcript.Entries(); len(got) != 2 {
+		t.Fatalf("in-memory transcript diverged from persisted entries: %+v", got)
+	}
+}
+
 func TestRuntimeRequiresSessionState(t *testing.T) {
 	runtime := &Runtime{}
 	if _, err := runtime.Prompt(context.Background(), "hello"); err == nil {

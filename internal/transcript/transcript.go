@@ -25,20 +25,21 @@ type Transcript struct {
 	entries []Entry
 }
 
+func (t *Transcript) Append(entry Entry) {
+	entry.ToolCalls = append([]ToolCall(nil), entry.ToolCalls...)
+	t.entries = append(t.entries, entry)
+}
+
 func (t *Transcript) AppendUser(content any) {
-	t.entries = append(t.entries, Entry{Role: RoleUser, Content: content})
+	t.Append(Entry{Role: RoleUser, Content: content})
 }
 
 func (t *Transcript) AppendAssistant(content any, toolCalls []ToolCall) {
-	t.entries = append(t.entries, Entry{
-		Role:      RoleAssistant,
-		Content:   content,
-		ToolCalls: append([]ToolCall(nil), toolCalls...),
-	})
+	t.Append(Entry{Role: RoleAssistant, Content: content, ToolCalls: toolCalls})
 }
 
 func (t *Transcript) AppendTool(toolCallID string, content any) {
-	t.entries = append(t.entries, Entry{Role: RoleTool, Content: content, ToolCallID: toolCallID})
+	t.Append(Entry{Role: RoleTool, Content: content, ToolCallID: toolCallID})
 }
 
 func (t *Transcript) Entries() []Entry {

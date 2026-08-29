@@ -103,13 +103,15 @@ These are separate layers.
 
 `internal/session.State` owns logical conversation identity, workspace metadata, and the canonical transcript. It should remain meaningful after one process or provider client disappears.
 
-`internal/agent.Runtime` owns the execution environment used to continue that state: provider, discovered tools and commands, Skills, controls, context construction, approval callbacks, and frontend event callbacks. A runtime should be rebuildable around the same logical state.
+`internal/agent.Runtime` owns the execution environment used to continue that state: provider, discovered tools and commands, Skills, controls, context construction, approval callbacks, frontend event callbacks, and an optional session store. A runtime should be rebuildable around the same logical state.
 
 A frontend turns an active runtime/session pair into a user experience. The built-in REPL and ACP adapter should therefore project the same underlying concepts rather than defining separate agent semantics. ACP names and wire objects should stay confined to `internal/acp` wherever possible.
 
 Streaming belongs to the provider/runtime path rather than canonical session state. `internal/provider.Provider.Generate` returns a completed result while optionally emitting stream events. The runtime forwards text-delta events to its event callback; frontends decide how to render those events. A transport supporting incremental text does not require canonical session state to become transport-specific.
 
-The current `session.State` is an ownership boundary, not yet a durable serialization contract. Persistence should serialize only logical state after the transcript/content schema is explicitly defined; it should not serialize provider clients, extension registries, controls, or frontend callbacks.
+`session.State` remains an in-memory ownership model rather than the durable file schema. `internal/session.FileStore` uses a separate versioned append-only record format containing session metadata and portable transcript facts. Runtime/provider objects, extension registries, controls, context builders, credentials, and frontend callbacks are never serialized into that format.
+
+Persistent CLI sessions are opt-in through a named session ID. Reopening one loads its logical state first, then rebuilds the runtime from current configuration and discovery using the persisted workspace. ACP remains in-memory until its protocol-level load-session path is implemented.
 
 ## Context and provider requests
 

@@ -15,7 +15,7 @@ internal/context      model-context request materialization from runtime instruc
 internal/control      external control process chain
 internal/extension    extension discovery and namespacing
 internal/provider     provider request interface and transports
-internal/session      logical session identity, workspace metadata, and transcript ownership
+internal/session      logical session state plus durable named-session storage
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, and execution
 internal/transcript   provider-independent logical conversation history
@@ -75,7 +75,7 @@ For workspace instructions and context materialization, test root `AGENTS.md` co
 
 For transcript behavior, test logical ordering and the provider-independent information needed to reconstruct user, assistant, tool-call, and tool-result history. Do not turn transport fields into transcript fields merely because one provider exposes them.
 
-For session/runtime ownership, test the actual boundary: `session.State` carries logical state, while `agent.Runtime` requires that state and carries execution dependencies. Persistence encoding is not part of this contract yet.
+For session/runtime ownership, test the actual boundary: `session.State` carries logical state, while `agent.Runtime` requires that state and carries execution dependencies. For persistence, test the versioned durable schema separately from the Go structs, including text-only content, metadata/transcript round trips, file permissions, safe IDs, and the ordering that makes an assistant tool call durable before execution.
 
 For provider requests, test the semantic boundary independently from individual HTTP transports: `context.Request` preserves selected instructions, logical transcript tail, and visible tools until `internal/provider` renders them. Transport-specific JSON/SSE translation still belongs in the individual provider tests.
 
@@ -89,7 +89,7 @@ For provider transports, keep HTTP/JSON/SSE translation tests inside `internal/p
 
 For controls, test chain ordering and decision accumulation/short-circuit behavior separately from runtime reactions to `allow`, `deny`, and `ask`.
 
-For ACP, test JSON-RPC parsing and ACP projection in `internal/acp`; avoid encoding ACP-specific assumptions into session, provider, or transcript packages.
+For ACP, test JSON-RPC parsing and ACP projection in `internal/acp`; avoid encoding ACP-specific assumptions into session, provider, or transcript packages. ACP persistence/load semantics should reuse the logical session Store rather than creating a second history representation.
 
 ## Cross-package paths worth tracing first
 
@@ -125,21 +125,24 @@ transcript + runtime context
 
 Do not infer streaming guarantees from one provider implementation. The provider interface must represent any guarantee relied upon by agent/frontends. Do not move provider-native cache or continuation objects into session/transcript state merely because they enter through the provider request path.
 
-### Session-state changes
+### Session-state and persistence changes
 
 ```text
-session.State
-  -> agent.Runtime
-  -> context materialization
-  -> CLI/ACP runtime creation
-  -> future store/resume boundary
+session.State / transcript.Entry
+  -> session.Store durable records
+  -> agent.Runtime append ordering
+  -> CLI named-session open/resume
+  -> runtime reconstruction from persisted Workspace
+  -> future ACP load/resume
 ```
 
-Do not put a provider client, extension registry, control chain, context builder, credential, or frontend callback into logical session state. A runtime should be reconstructible around the state.
+Do not put a provider client, extension registry, control chain, context builder, credential, or frontend callback into logical session state or durable records. A runtime should be reconstructible around the loaded state.
+
+The durable JSONL schema is a compatibility contract. Changing `session.State` or `transcript.Entry` does not automatically change that file format; introduce an explicit storage-version migration when durable semantics change.
 
 ### Workspace changes
 
-Workspace/cwd behavior crosses session metadata, extension search roots, root `AGENTS.md`, project Skill discovery, context construction, process working directories, CLI runtime creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
+Workspace/cwd behavior crosses persisted session metadata, extension search roots, root `AGENTS.md`, project Skill discovery, context construction, process working directories, CLI runtime creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
 
 ### Naming changes
 
@@ -150,7 +153,7 @@ Tool and command names appear in extension loading, registries, model-facing con
 Update docs with behavior changes, not as a cleanup after the code has already diverged.
 
 - `docs/configuration.md` owns config/auth-facing contracts.
-- `docs/session.md` owns logical session state, runtime ownership, transcript/context materialization, provider-request semantics, workspace instructions, and Agent Skills semantics.
+- `docs/session.md` owns logical session state, durable session storage, runtime ownership, transcript/context materialization, provider-request semantics, workspace instructions, and Agent Skills semantics.
 - `docs/extension/*` owns declarations/discovery/execution contracts.
 - `docs/acp.md` owns ACP behavior.
 - `docs/architecture.md` owns rationale and core-versus-external boundaries.
