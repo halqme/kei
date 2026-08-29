@@ -102,11 +102,11 @@ assistant message
 
 `internal/transcript` owns this in-memory logical history. Its entries distinguish user, assistant, and tool roles plus provider-independent tool-call identity, name, arguments, and result linkage. It deliberately has no system role: runtime instructions are context, not conversation history.
 
-Provider transport types are not the transcript schema. `provider.Message`, `provider.ToolCall`, and `provider.FunctionCall` remain request/response representations at the provider boundary. The agent runtime converts provider results into logical transcript entries, and the context builder renders transcript entries back into the current provider message shape for inference.
+Provider transport types are not the transcript schema. `provider.Message`, `provider.ToolCall`, and `provider.FunctionCall` remain transport-oriented request/response representations inside `internal/provider`. The agent runtime converts provider results into logical transcript entries. In the other direction, the context builder preserves logical transcript entries in `context.Request`; provider adapters render those entries into their current transport representation only after the provider boundary.
 
 The first transcript seam is intentionally not a persistence format. `Entry.Content` remains an opaque in-memory value so this refactor does not invent a durable multimodal/content schema before persistence actually requires one. A future session store must define serialization and compatibility explicitly rather than assuming the current Go field shape is stable storage.
 
-Runtime instructions are not transcript entries. System instructions are materialized separately by the context builder for each provider request.
+Runtime instructions are not transcript entries. Instructions are materialized separately by the context builder for each provider request.
 
 Frontend lifecycle events are also not transcript entries. Events such as `tool_start`, `tool_end`, and streamed text chunks exist to project execution progress to a frontend; they are not independently part of the logical conversation.
 
@@ -152,7 +152,7 @@ The current `internal/context.Builder` implements the first narrow form of this 
 2. `<workspace>/AGENTS.md`, when present;
 3. the name and description catalog for discovered Agent Skills.
 
-For each model turn, the builder renders the current logical transcript tail into provider messages and prepends those instructions as a system message. It also carries the currently visible tool schemas into the provider call. The builder does not yet model checkpoints, provider-native state, or compaction policy.
+For each model turn, the builder returns a `context.Request` that keeps the selected instructions, logical transcript tail, and currently visible tool schemas as separate fields. It does not translate those regions into provider messages. The provider layer performs the current transport rendering after it receives the request. The builder does not yet model checkpoints, provider-native state, or compaction policy.
 
 A `before_model` control may replace the instructions for that provider request. The replacement is request-scoped context; it does not rewrite the transcript or mutate the builder's stable base.
 
@@ -187,11 +187,13 @@ A checkpoint is derived state, not conversation history.
 
 The tail is the uncovered recent transcript after the selected checkpoint state. It should normally grow by appending new turns rather than rewriting old ones.
 
-The current implementation has no checkpoint storage, so the materialized tail is simply all entries returned by the in-memory transcript.
+The current implementation has no checkpoint storage, so `context.Request.Tail` contains all entries returned by the in-memory transcript.
 
 ### Volatile context
 
 Volatile context exists only for the current request or runtime state. It may include temporary control output or other request-scoped information that should not be confused with durable conversation history.
+
+The current request type does not add an empty `Volatile` field merely for future symmetry. Request-scoped instruction replacement is represented by the instructions actually selected for that request. A distinct volatile region should be added only when current behavior needs one.
 
 Keeping these regions distinct preserves semantics and also gives provider adapters enough structure to make sensible cache decisions.
 
@@ -271,6 +273,8 @@ Tool availability
 
 Controls may change availability from turn to turn. A provider that supports dynamic tool choice can preserve the stable catalog and vary only availability. Providers without such a facility may continue to render a filtered tool set.
 
+The current `context.Request.Tools` field contains only the visible tool schemas for that turn; catalog-versus-availability is not yet represented separately because no current provider path consumes that distinction.
+
 This distinction is an optimization boundary, not a reason to weaken controls. If the semantic tool definition itself changes, the provider request should reflect that change even when it invalidates a cache prefix.
 
 ## Instructions and overlays
@@ -279,23 +283,35 @@ The same principle applies to instructions.
 
 Stable repository and agent instructions should be distinguishable from temporary per-turn overlays when they are semantically distinct. A control that genuinely replaces the system instruction changes the model request and should do so. A small request-scoped addition does not need to be modeled as mutation of the durable transcript.
 
-The current builder already enforces the first part of that separation: stable instructions live outside the transcript, while a `before_model` replacement affects only the materialized provider request.
+The current builder already enforces the first part of that separation: stable instructions live outside the transcript, while a `before_model` replacement affects only `context.Request.Instructions` for that model call.
 
 Provider adapters remain responsible for mapping those instruction regions into their native message or instruction format.
 
 ## Provider boundary
 
-The current provider interface is:
+The provider-facing request model now belongs to `internal/context`:
 
 ```go
-Stream(ctx, messages, tools, callback) (Result, error)
+type Request struct {
+    Instructions string
+    Tail         []transcript.Entry
+    Tools        []map[string]any
+}
 ```
 
-The context builder currently has to flatten its materialized context into that legacy pair of message/tool arguments before the provider adapter sees it. The interface therefore still loses checkpoint compatibility, stable-region identity, provider-native state, and request-level telemetry structure.
+The provider interface consumes that request as one unit:
 
-Persistent sessions and compaction will likely require the provider boundary to accept a request-level representation rather than a bare message slice. The core should still avoid implementing a universal AST for every provider-native object. Portable conversation state belongs in the transcript/context model; opaque provider-native continuation or compaction state should remain provider-owned data carried through an explicit seam.
+```go
+Generate(ctx, request, callback) (Result, error)
+```
 
-This is now the next major architectural seam after the session/runtime split. It should be formed before provider cache or continuation policy is added.
+This is intentionally narrower than the eventual conceptual `Base + Checkpoints + Tail + Volatile` layout. Only distinctions that exist in current behavior are represented now. Checkpoints, provider continuation state, volatile overlays, telemetry options, and tool catalog/availability can extend the request or adjacent provider state when those features are actually implemented.
+
+The important boundary is dependency direction: `internal/context` no longer depends on `internal/provider`. The context builder materializes model-facing semantics; the provider package decides how those semantics become Anthropic, Gemini, OpenAI-compatible, or Codex wire objects.
+
+The existing transports still share a message-oriented rendering helper before entering their older transport functions. That is an implementation detail inside `internal/provider`, not the runtime/context contract. A provider can consume request regions more directly when cache breakpoints, continuation handles, or native compaction make that useful without changing the agent loop.
+
+The core should continue to avoid implementing a universal AST for every provider-native object. Portable conversation state belongs in the transcript/context model; opaque provider-native continuation or compaction state should remain provider-owned data carried through an explicit seam.
 
 ## Provider telemetry
 
@@ -339,7 +355,7 @@ Recording the workspace path in logical state does not mean runtime discovery re
 
 ## Current implementation
 
-Today `internal/session.State` owns the session ID, workspace path, and in-memory `transcript.Transcript`. `internal/agent.Runtime` owns the dependencies and callbacks needed to execute turns against that state. `internal/context.Builder` owns provider-context materialization.
+Today `internal/session.State` owns the session ID, workspace path, and in-memory `transcript.Transcript`. `internal/agent.Runtime` owns the dependencies and callbacks needed to execute turns against that state. `internal/context.Builder` owns model-context materialization, and `internal/provider` owns transport rendering.
 
 For ordinary user text, the runtime:
 
@@ -347,13 +363,14 @@ For ordinary user text, the runtime:
 2. appends a user entry to `State.Transcript`;
 3. collects the extension-tool and Skill-reader schemas visible to the runtime;
 4. applies `before_model` controls using `State.ID` and `State.Workspace`;
-5. asks the context builder to render transcript entries plus runtime instructions into provider messages and tools;
-6. calls `Provider.Stream`;
-7. converts the completed provider result into an assistant transcript entry;
-8. returns when there are no tool calls;
-9. otherwise executes tool calls and appends tool-result entries before repeating.
+5. asks the context builder to materialize `Instructions`, logical `Tail`, and visible `Tools` into a `context.Request`;
+6. calls `Provider.Generate` with that request;
+7. lets the provider layer render the request into its current wire representation;
+8. converts the completed provider result into an assistant transcript entry;
+9. returns when there are no tool calls;
+10. otherwise executes tool calls and appends tool-result entries before repeating.
 
-The materialized system message is not appended to the transcript. Provider tool-call transport fields are also not stored wholesale: the transcript keeps the logical call ID, name, arguments, and result linkage needed to reconstruct the conversation.
+Runtime instructions are never appended to the transcript. Provider tool-call transport fields are also not stored wholesale: the transcript keeps the logical call ID, name, arguments, and result linkage needed to reconstruct the conversation.
 
 The loop is capped at 32 model turns for one `Prompt` call.
 
@@ -375,14 +392,14 @@ ACP currently maps protocol session IDs to active in-memory `agent.Runtime` valu
 
 ## Implementation direction
 
-The context-builder, transcript, and session/runtime ownership seams now exist. Persistence should still be introduced without prematurely coupling storage, compaction, and providers:
+The context-builder, transcript, session/runtime, and provider-request seams now exist. Persistence can be introduced without first committing the session model to provider transport details:
 
-1. evolve the provider request boundary so materialized base/checkpoint/tail/volatile regions and optional provider state do not have to be flattened too early;
-2. define the durable transcript/content encoding needed by storage and add a persistent session store plus resume path;
-3. add per-session serialization for concurrent frontends/runtimes;
-4. expose provider usage and cache telemetry;
-5. add checkpoint storage;
-6. extend the context builder to select compatible checkpoints and uncovered transcript tail;
+1. define the durable transcript/content encoding needed by storage and add a persistent session store plus resume path;
+2. add per-session serialization for concurrent frontends/runtimes;
+3. expose provider usage and cache telemetry;
+4. add checkpoint storage;
+5. extend `context.Request` and the context builder to select compatible checkpoints and the uncovered transcript tail;
+6. let providers use request regions and optional provider-owned state for cache/continuation optimizations where supported;
 7. implement the first simple compaction strategy.
 
 Do not make session persistence depend on a compaction algorithm, and do not make compaction depend on a particular provider cache API.
@@ -397,9 +414,10 @@ The intended session design can be summarized by these invariants:
 4. Provider transport structs are not canonical transcript state.
 5. Runtime instructions are not transcript history.
 6. Context is a materialized projection of transcript plus runtime environment.
-7. Compaction produces replaceable checkpoints rather than rewritten history.
-8. Provider continuation and prompt caches are accelerators, never sources of truth.
-9. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
-10. A session has one linear mutation stream at a time.
+7. Provider adapters receive structured model-context regions before transport rendering.
+8. Compaction produces replaceable checkpoints rather than rewritten history.
+9. Provider continuation and prompt caches are accelerators, never sources of truth.
+10. Context should evolve as stable prefix, infrequently changing checkpoint state, append-only recent tail, and volatile request input.
+11. A session has one linear mutation stream at a time.
 
 These rules should remain true even as the storage format, compaction strategy, provider APIs, or frontend capabilities evolve.

@@ -75,16 +75,15 @@ func (r *Runtime) Prompt(ctx context.Context, text string) (string, error) {
 			}
 		}
 
-		materialized := r.ContextBuilder.Materialize(state.Transcript.Entries(), tools, instructions)
+		request := r.ContextBuilder.Materialize(state.Transcript.Entries(), tools, instructions)
 		var callback provider.StreamCallback
 		if r.OnEvent != nil {
 			callback = func(event provider.StreamEvent) {
 				if event.Type == provider.StreamEventTextDelta && event.Text != "" {
 					r.OnEvent("assistant_message_chunk", map[string]any{"text": event.Text})
 				}
-			}
 		}
-		res, err := r.Provider.Stream(ctx, materialized.Messages, materialized.Tools, callback)
+		res, err := r.Provider.Generate(ctx, request, callback)
 		if err != nil {
 			return "", err
 		}

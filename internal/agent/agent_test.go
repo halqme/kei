@@ -19,16 +19,16 @@ type skillProvider struct {
 	calls int
 }
 
-func (p *skillProvider) Stream(_ context.Context, messages []provider.Message, tools []map[string]any, _ provider.StreamCallback) (provider.Result, error) {
+func (p *skillProvider) Generate(_ context.Context, request agentcontext.Request, _ provider.StreamCallback) (provider.Result, error) {
 	p.t.Helper()
 	p.calls++
-	if len(messages) < 2 || messages[0].Role != "system" || messages[0].Content != "base" || messages[1].Role != "user" {
-		p.t.Fatalf("unexpected materialized context: %+v", messages)
+	if request.Instructions != "base" || len(request.Tail) == 0 || request.Tail[0].Role != transcript.RoleUser {
+		p.t.Fatalf("unexpected materialized request: %+v", request)
 	}
 	switch p.calls {
 	case 1:
 		found := false
-		for _, tool := range tools {
+		for _, tool := range request.Tools {
 			fn, _ := tool["function"].(map[string]any)
 			if fn["name"] == "load_skill" {
 				found = true
@@ -50,8 +50,9 @@ func (p *skillProvider) Stream(_ context.Context, messages []provider.Message, t
 			}},
 		}}, nil
 	case 2:
-		last := messages[len(messages)-1]
-		if last.Role != "tool" || last.ToolCallID != "skill-call" || !strings.Contains(last.Content.(string), "# Review") {
+		last := request.Tail[len(request.Tail)-1]
+		text, _ := last.Content.(string)
+		if last.Role != transcript.RoleTool || last.ToolCallID != "skill-call" || !strings.Contains(text, "# Review") {
 			p.t.Fatalf("unexpected skill result: %+v", last)
 		}
 		return provider.Result{Message: provider.Message{Role: "assistant", Content: "done"}}, nil

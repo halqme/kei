@@ -11,10 +11,10 @@ internal/agent        runtime/model/tool orchestration
 internal/auth         credential store and provider auth flows
 internal/command      slash-command descriptors and execution
 internal/config       configuration schema and persistence
-internal/context      model-context materialization from runtime instructions and transcript tail
+internal/context      model-context request materialization from runtime instructions and transcript tail
 internal/control      external control process chain
 internal/extension    extension discovery and namespacing
-internal/provider     provider interface and transports
+internal/provider     provider request interface and transports
 internal/session      logical session identity, workspace metadata, and transcript ownership
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, and execution
@@ -49,6 +49,7 @@ Use focused tests while iterating, for example:
 go test ./internal/session
 go test ./internal/transcript
 go test ./internal/context
+go test ./internal/provider
 go test ./internal/agent
 go test ./internal/acp
 go test ./cmd/kei
@@ -70,11 +71,13 @@ For extension discovery, test roots, precedence, whole-extension shadowing, stab
 
 For Agent Skills, test the project/user root precedence, required `SKILL.md` metadata contract, progressive-disclosure catalog, and confinement of referenced resource reads to the Skill root.
 
-For workspace instructions and context materialization, test root `AGENTS.md` composition, the absent-file case, and the boundary that keeps runtime instructions out of the transcript. Nested instruction scoping is not part of the current contract.
+For workspace instructions and context materialization, test root `AGENTS.md` composition, the absent-file case, request-scoped instruction replacement, and the boundary that keeps runtime instructions out of the transcript. Nested instruction scoping is not part of the current contract.
 
 For transcript behavior, test logical ordering and the provider-independent information needed to reconstruct user, assistant, tool-call, and tool-result history. Do not turn transport fields into transcript fields merely because one provider exposes them.
 
 For session/runtime ownership, test the actual boundary: `session.State` carries logical state, while `agent.Runtime` requires that state and carries execution dependencies. Persistence encoding is not part of this contract yet.
+
+For provider requests, test the semantic boundary independently from individual HTTP transports: `context.Request` preserves selected instructions, logical transcript tail, and visible tools until `internal/provider` renders them. Transport-specific JSON/SSE translation still belongs in the individual provider tests.
 
 For tools, test schema defaults, required/optional placeholders, array expansion, stdin JSON, timeout behavior, PATH lookup, extension-relative executables, workspace cwd, stderr, and non-zero exits as relevant to the change.
 
@@ -82,7 +85,7 @@ For slash commands, test invocation parsing separately from process execution. U
 
 For configuration, test lookup order, explicit versus implicit paths, creation permissions, non-overwrite behavior, ordered provider resolution, aliases, and errors.
 
-For provider transports, keep HTTP/JSON/SSE translation tests inside `internal/provider`. Agent tests should focus on provider-independent orchestration.
+For provider transports, keep HTTP/JSON/SSE translation tests inside `internal/provider`. Agent tests should focus on provider-independent orchestration and the request they hand to the provider boundary.
 
 For controls, test chain ordering and decision accumulation/short-circuit behavior separately from runtime reactions to `allow`, `deny`, and `ask`.
 
@@ -100,7 +103,8 @@ A tool descriptor field can affect:
 tools.json
   -> internal/tool Descriptor
   -> internal/extension loading
-  -> provider tool schema
+  -> context.Request tool schemas
+  -> provider transport rendering
   -> tool execution
   -> kei tools / kei exec
   -> examples and docs
@@ -108,17 +112,18 @@ tools.json
 
 A slash-command descriptor field follows the analogous path through `internal/command` and frontend command advertisement.
 
-### Provider streaming changes
+### Provider request and streaming changes
 
 ```text
-provider transport
-  -> provider.Stream / StreamEvent
-  -> context rendering
+transcript + runtime context
+  -> internal/context Request
+  -> provider.Generate / transport rendering
+  -> provider Result / StreamEvent
   -> agent Runtime.OnEvent
   -> REPL and/or ACP projection
 ```
 
-Do not infer streaming guarantees from one provider implementation. The provider interface must represent any guarantee relied upon by agent/frontends.
+Do not infer streaming guarantees from one provider implementation. The provider interface must represent any guarantee relied upon by agent/frontends. Do not move provider-native cache or continuation objects into session/transcript state merely because they enter through the provider request path.
 
 ### Session-state changes
 
@@ -145,7 +150,7 @@ Tool and command names appear in extension loading, registries, model-facing con
 Update docs with behavior changes, not as a cleanup after the code has already diverged.
 
 - `docs/configuration.md` owns config/auth-facing contracts.
-- `docs/session.md` owns logical session state, runtime ownership, transcript/context materialization, workspace instructions, and Agent Skills semantics.
+- `docs/session.md` owns logical session state, runtime ownership, transcript/context materialization, provider-request semantics, workspace instructions, and Agent Skills semantics.
 - `docs/extension/*` owns declarations/discovery/execution contracts.
 - `docs/acp.md` owns ACP behavior.
 - `docs/architecture.md` owns rationale and core-versus-external boundaries.

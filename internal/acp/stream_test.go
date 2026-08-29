@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/halqme/kei/internal/agent"
+	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/session"
 	"github.com/halqme/kei/internal/tool"
@@ -16,7 +17,7 @@ import (
 
 type streamingTestProvider struct{}
 
-func (streamingTestProvider) Stream(_ context.Context, _ []provider.Message, _ []map[string]any, callback provider.StreamCallback) (provider.Result, error) {
+func (streamingTestProvider) Generate(_ context.Context, _ agentcontext.Request, callback provider.StreamCallback) (provider.Result, error) {
 	if callback != nil {
 		callback(provider.StreamEvent{Type: provider.StreamEventTextDelta, Text: "hello "})
 		callback(provider.StreamEvent{Type: provider.StreamEventTextDelta, Text: "world"})

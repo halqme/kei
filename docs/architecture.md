@@ -107,9 +107,38 @@ These are separate layers.
 
 A frontend turns an active runtime/session pair into a user experience. The built-in REPL and ACP adapter should therefore project the same underlying concepts rather than defining separate agent semantics. ACP names and wire objects should stay confined to `internal/acp` wherever possible.
 
-This matters for streaming too: `internal/provider.Provider.Stream` returns a completed result while optionally emitting stream events. The runtime forwards text-delta events to its event callback; frontends decide how to render those events. A transport supporting incremental text does not require canonical session state to become transport-specific.
+Streaming belongs to the provider/runtime path rather than canonical session state. `internal/provider.Provider.Generate` returns a completed result while optionally emitting stream events. The runtime forwards text-delta events to its event callback; frontends decide how to render those events. A transport supporting incremental text does not require canonical session state to become transport-specific.
 
 The current `session.State` is an ownership boundary, not yet a durable serialization contract. Persistence should serialize only logical state after the transcript/content schema is explicitly defined; it should not serialize provider clients, extension registries, controls, or frontend callbacks.
+
+## Context and provider requests
+
+Context semantics belong above provider transport details.
+
+`internal/context.Builder` materializes the current model request as separate instructions, logical transcript tail, and visible tools. `internal/provider.Provider.Generate` receives that `context.Request` and decides how to render it for the selected transport.
+
+The dependency direction is intentional:
+
+```text
+session transcript + runtime environment
+                │
+                ▼
+        internal/context
+          context.Request
+                │
+                ▼
+       internal/provider
+         transport rendering
+                │
+                ▼
+         provider API
+```
+
+`internal/context` must not depend on provider wire structs. Conversely, provider-native continuation handles, cache directives, compacted opaque state, or transport telemetry should not become canonical session or transcript fields.
+
+The current request contains only distinctions that already exist in the runtime: instructions, tail, and visible tools. Do not add placeholder fields for checkpoints, volatile overlays, cache identity, or continuation state merely to make the type look complete. Extend the boundary when an implemented feature needs the distinction.
+
+This separation allows different providers to exploit their native caching or continuation mechanisms without forcing those concepts into the agent loop or durable session model.
 
 ## Controls are policy, not isolation
 

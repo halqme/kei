@@ -1,6 +1,10 @@
 package provider
 
-import "context"
+import (
+	"context"
+
+	agentcontext "github.com/halqme/kei/internal/context"
+)
 
 type Message struct {
 	Role       string     `json:"role"`
@@ -26,7 +30,7 @@ type Result struct {
 }
 
 type Provider interface {
-	Stream(ctx context.Context, messages []Message, tools []map[string]any, callback StreamCallback) (Result, error)
+	Generate(ctx context.Context, request agentcontext.Request, callback StreamCallback) (Result, error)
 }
 
 type StreamEvent struct {

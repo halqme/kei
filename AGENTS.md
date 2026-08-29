@@ -30,10 +30,10 @@ internal/agent        runtime orchestration and model/tool loop
 internal/auth         credential storage and provider authentication
 internal/command      slash-command descriptors, parsing, execution
 internal/config       config schema, lookup, creation, persistence
-internal/context      model-context materialization from runtime instructions and transcript tail
+internal/context      model-context request materialization from runtime instructions and transcript tail
 internal/control      generic external control chain
 internal/extension    extension roots, discovery, shadowing, namespacing
-internal/provider     provider interface and provider transports
+internal/provider     provider request interface and provider transports
 internal/session      logical session identity, workspace metadata, and transcript ownership
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, argv/stdin execution
@@ -103,13 +103,15 @@ When changing extension discovery, cover the affected precedence and determinism
 
 When changing workspace instructions or Agent Skills, cover the affected root precedence, required metadata, progressive disclosure, and resource confinement boundaries without inventing nested scoping or extra Skill schema.
 
-When changing context materialization, cover the boundary between runtime instructions and transcript history; request-scoped instruction changes must not rewrite canonical conversation state.
+When changing context materialization, cover the boundary between runtime instructions and transcript history, preserve the request regions actually used by current behavior, and ensure request-scoped instruction changes do not rewrite canonical conversation state.
 
 When changing session/runtime ownership, keep logical identity, workspace metadata, and transcript state under `internal/session`, and prove that runtime dependencies can be rebuilt around that state rather than becoming fields of the durable session model.
 
 When changing tool or slash-command execution, cover the relevant combination of `PATH` lookup, extension-relative executable resolution, workspace cwd, stdin mode, placeholders/defaults, timeout/cancellation, stderr, and non-zero exit behavior.
 
 When changing configuration or provider selection, cover ordering, explicit overrides, generated config location/permissions, existing-file preservation, explicit missing paths, authentication checks, and unsupported provider errors as applicable.
+
+When changing the provider request boundary, keep model-context semantics in `internal/context` and transport rendering in `internal/provider`. Do not make `internal/context` depend on provider wire structs. Cover the conversion once at that boundary instead of making agent-loop tests prove every HTTP representation.
 
 When changing provider transports, keep transport-specific serialization/parsing tests in `internal/provider`; do not make agent-loop tests prove HTTP details.
 
@@ -157,7 +159,7 @@ Preserve these unless the task explicitly changes the contract and the correspon
 - Workspace-specific agent instructions come from root `AGENTS.md`; persistent natural-language instructions are not config fields.
 - Logical session state owns identity, workspace metadata, and transcript; provider clients, tools, controls, context builders, and frontend callbacks belong to the agent runtime.
 - Runtime instructions are materialized into provider context and are not canonical transcript entries.
-- Provider transport structs are not canonical transcript state.
+- Context requests preserve model-facing semantics until the provider boundary; provider transport structs do not belong in `internal/context` or canonical transcript state.
 - Tool `effects` are policy/UX metadata, not a security boundary.
 - ACP is a frontend adapter, not the internal data model.
 - Credentials stay in the auth store or environment; generated configuration does not contain secrets.
@@ -170,7 +172,7 @@ The rationale and public description of these invariants live in `docs/architect
 A change that alters a seam should be treated as cross-cutting even if the diff begins in one package. In particular:
 
 - Descriptor schema changes usually touch descriptor parsing, execution, examples, docs, and tests.
-- Provider stream changes usually touch `internal/provider`, `internal/context`, `internal/agent`, and frontend projection.
+- Provider request/stream changes usually touch `internal/context`, `internal/provider`, `internal/agent`, and frontend projection when stream semantics change.
 - Session-state changes usually touch `internal/session`, `internal/agent`, persistence/resume code when present, and ACP lifecycle handling.
 - New control decisions usually touch the control protocol, context materialization, runtime behavior, approval behavior, and docs.
 - Workspace semantics usually touch session metadata, discovery, context, process cwd, ACP session creation, CLI wiring, and tests.
