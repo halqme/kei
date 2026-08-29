@@ -13,6 +13,7 @@ import (
 	"github.com/halqme/kei/internal/control"
 	"github.com/halqme/kei/internal/extension"
 	"github.com/halqme/kei/internal/provider"
+	keisession "github.com/halqme/kei/internal/session"
 	"github.com/halqme/kei/internal/skill"
 )
 
@@ -22,7 +23,7 @@ func discoverExtensions(cfg config.Config, workdir string) (*extension.Registry,
 	return extension.Discover(extension.SearchRoots(workdir, cfg.ExtensionDirs))
 }
 
-func makeSession(cfg config.Config, r *extension.Registry, id, workdir, providerOverride, modelOverride string) (*agent.Session, error) {
+func makeSession(cfg config.Config, r *extension.Registry, id, workdir, providerOverride, modelOverride string) (*agent.Runtime, error) {
 	if len(cfg.Providers) == 0 {
 		cfg = withAvailableProviders(cfg)
 	}
@@ -50,14 +51,13 @@ func makeSession(cfg config.Config, r *extension.Registry, id, workdir, provider
 	if err != nil {
 		return nil, err
 	}
-	return &agent.Session{
-		ID:             id,
+	return &agent.Runtime{
+		State:          &keisession.State{ID: id, Workspace: workdir},
 		Tools:          r.Tools,
 		Commands:       r.Commands,
 		Skills:         skills,
 		Controls:       control.New(cfg.Controls),
 		ContextBuilder: contextBuilder,
-		Workdir:        workdir,
 		Provider:       prov,
 	}, nil
 }

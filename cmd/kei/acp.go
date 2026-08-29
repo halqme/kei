@@ -21,7 +21,7 @@ func runACP(args []string) error {
 	if err != nil {
 		return err
 	}
-	srv := acp.NewServer(os.Stdin, os.Stdout, func(id, cwd string) (*agent.Session, error) {
+	srv := acp.NewServer(os.Stdin, os.Stdout, func(id, cwd string) (*agent.Runtime, error) {
 		r, err := discoverExtensions(cfg, cwd)
 		if err != nil {
 			return nil, err

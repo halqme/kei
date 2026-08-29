@@ -25,8 +25,8 @@ The process ABI is about invocation, not buffering. The current tool, slash-comm
 The core should own coordination that cannot sensibly be delegated to one capability process:
 
 - model/provider communication
-- conversation and session state
-- workspace instruction composition
+- logical conversation and session state
+- context materialization and workspace instructions
 - Agent Skills discovery and progressive disclosure
 - extension discovery and namespace resolution
 - routing model tool calls and human slash commands
@@ -65,7 +65,7 @@ Distribution is intentionally outside the runtime. A package manager may place d
 
 ## Instructions and Skills use existing file contracts
 
-Project-specific agent instructions live in the workspace-root `AGENTS.md`. They are composed into the session system prompt rather than duplicated as natural-language configuration in `config.json`.
+Project-specific agent instructions live in the workspace-root `AGENTS.md`. They are composed into stable runtime context rather than duplicated as natural-language configuration in `config.json` or stored in conversation history.
 
 Skills use the Agent Skills `SKILL.md` contract and standard `.agents/skills` locations. `kei` discovers and validates the metadata it needs for routing, advertises only names and descriptions initially, and loads full Skill instructions or referenced resources on demand. It does not introduce a `skills.json` schema or a kei-specific Skill frontmatter extension.
 
@@ -84,11 +84,11 @@ Collapsing these concepts tends to make the core more opinionated than necessary
 
 ## Higher-level modes are compositions
 
-Plan, YOLO, Review, Research, or similar modes are intentionally not first-class branches in the session loop.
+Plan, YOLO, Review, Research, or similar modes are intentionally not first-class branches in the agent runtime loop.
 
 A mode can often be described as a composition of:
 
-- system-prompt changes
+- system/context changes
 - a visible/hidden tool set
 - approval policy
 - one or more control processes
@@ -97,13 +97,19 @@ A mode can often be described as a composition of:
 
 The core should expose general seams that make these compositions possible. It should only learn a mode-specific concept when multiple real implementations demonstrate that a more general seam is missing.
 
-## Session core versus frontend
+## Session state, runtime, and frontend
 
-A session owns model history and orchestration. A frontend turns that session into a user experience.
+These are separate layers.
 
-The built-in REPL and ACP adapter should therefore project the same underlying concepts rather than defining separate agent semantics. ACP names and wire objects should stay confined to `internal/acp` wherever possible.
+`internal/session.State` owns logical conversation identity, workspace metadata, and the canonical transcript. It should remain meaningful after one process or provider client disappears.
 
-This matters for streaming too: `internal/provider.Provider.Stream` returns a completed result while optionally emitting stream events. The agent forwards text-delta events to its own event callback; frontends decide how to render those events. A transport supporting incremental text does not require the session model itself to become transport-specific.
+`internal/agent.Runtime` owns the execution environment used to continue that state: provider, discovered tools and commands, Skills, controls, context construction, approval callbacks, and frontend event callbacks. A runtime should be rebuildable around the same logical state.
+
+A frontend turns an active runtime/session pair into a user experience. The built-in REPL and ACP adapter should therefore project the same underlying concepts rather than defining separate agent semantics. ACP names and wire objects should stay confined to `internal/acp` wherever possible.
+
+This matters for streaming too: `internal/provider.Provider.Stream` returns a completed result while optionally emitting stream events. The runtime forwards text-delta events to its event callback; frontends decide how to render those events. A transport supporting incremental text does not require canonical session state to become transport-specific.
+
+The current `session.State` is an ownership boundary, not yet a durable serialization contract. Persistence should serialize only logical state after the transcript/content schema is explicitly defined; it should not serialize provider clients, extension registries, controls, or frontend callbacks.
 
 ## Controls are policy, not isolation
 

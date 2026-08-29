@@ -8,12 +8,15 @@ import (
 
 	"github.com/halqme/kei/internal/agent"
 	keicommand "github.com/halqme/kei/internal/command"
+	"github.com/halqme/kei/internal/session"
 )
 
 func TestInitialize(t *testing.T) {
 	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}` + "\n")
 	var out bytes.Buffer
-	s := NewServer(in, &out, func(id, cwd string) (*agent.Session, error) { return &agent.Session{ID: id, Workdir: cwd}, nil })
+	s := NewServer(in, &out, func(id, cwd string) (*agent.Runtime, error) {
+		return &agent.Runtime{State: &session.State{ID: id, Workspace: cwd}}, nil
+	})
 	if err := s.Serve(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -30,8 +33,8 @@ func TestSessionNewAdvertisesCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := NewServer(in, &out, func(id, cwd string) (*agent.Session, error) {
-		return &agent.Session{ID: id, Workdir: cwd, Commands: commands}, nil
+	s := NewServer(in, &out, func(id, cwd string) (*agent.Runtime, error) {
+		return &agent.Runtime{State: &session.State{ID: id, Workspace: cwd}, Commands: commands}, nil
 	})
 	if err := s.Serve(context.Background()); err != nil {
 		t.Fatal(err)

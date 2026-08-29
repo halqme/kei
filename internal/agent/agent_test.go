@@ -9,6 +9,7 @@ import (
 
 	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/session"
 	"github.com/halqme/kei/internal/skill"
 	"github.com/halqme/kei/internal/transcript"
 )
@@ -60,7 +61,7 @@ func (p *skillProvider) Stream(_ context.Context, messages []provider.Message, t
 	}
 }
 
-func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
+func TestRuntimeUsesSessionStateForMaterializedContext(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "skills")
 	dir := filepath.Join(root, "review")
 	if err := os.MkdirAll(dir, 0755); err != nil {
@@ -75,8 +76,9 @@ func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
 	}
 
 	p := &skillProvider{t: t}
-	s := &Session{Provider: p, Skills: skills, ContextBuilder: agentcontext.New("base")}
-	got, err := s.Prompt(context.Background(), "review this")
+	state := &session.State{ID: "test", Workspace: t.TempDir()}
+	runtime := &Runtime{State: state, Provider: p, Skills: skills, ContextBuilder: agentcontext.New("base")}
+	got, err := runtime.Prompt(context.Background(), "review this")
 	if err != nil {
 		t.Fatalf("Prompt failed: %v", err)
 	}
@@ -84,7 +86,7 @@ func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
 		t.Fatalf("unexpected response: %q", got)
 	}
 
-	entries := s.Transcript.Entries()
+	entries := state.Transcript.Entries()
 	if len(entries) != 4 {
 		t.Fatalf("got %d transcript entries, want 4: %+v", len(entries), entries)
 	}
@@ -99,5 +101,12 @@ func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
 	}
 	if entries[3].Role != transcript.RoleAssistant || entries[3].Content != "done" {
 		t.Fatalf("unexpected final assistant entry: %+v", entries[3])
+	}
+}
+
+func TestRuntimeRequiresSessionState(t *testing.T) {
+	runtime := &Runtime{}
+	if _, err := runtime.Prompt(context.Background(), "hello"); err == nil {
+		t.Fatal("Prompt succeeded without session state")
 	}
 }

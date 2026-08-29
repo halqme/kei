@@ -10,6 +10,7 @@ import (
 
 	"github.com/halqme/kei/internal/agent"
 	"github.com/halqme/kei/internal/provider"
+	"github.com/halqme/kei/internal/session"
 	"github.com/halqme/kei/internal/tool"
 )
 
@@ -33,12 +34,11 @@ func TestSessionPromptForwardsStreamChunksToACP(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	s := NewServer(strings.NewReader(""), &out, func(id, cwd string) (*agent.Session, error) {
-		return &agent.Session{
-			ID:       id,
+	s := NewServer(strings.NewReader(""), &out, func(id, cwd string) (*agent.Runtime, error) {
+		return &agent.Runtime{
+			State:    &session.State{ID: id, Workspace: cwd},
 			Provider: streamingTestProvider{},
 			Tools:    tools,
-			Workdir:  cwd,
 		}, nil
 	})
 

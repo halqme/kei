@@ -12,21 +12,21 @@ import (
 	"github.com/halqme/kei/internal/agent"
 )
 
-type SessionFactory func(id, cwd string) (*agent.Session, error)
+type RuntimeFactory func(id, cwd string) (*agent.Runtime, error)
 
 type Server struct {
 	in       io.Reader
 	out      io.Writer
-	factory  SessionFactory
+	factory  RuntimeFactory
 	mu       sync.Mutex
-	sessions map[string]*agent.Session
+	runtimes map[string]*agent.Runtime
 	cancels  map[string]context.CancelFunc
 	seq      int
 	wg       sync.WaitGroup
 }
 
-func NewServer(in io.Reader, out io.Writer, f SessionFactory) *Server {
-	return &Server{in: in, out: out, factory: f, sessions: map[string]*agent.Session{}, cancels: map[string]context.CancelFunc{}}
+func NewServer(in io.Reader, out io.Writer, f RuntimeFactory) *Server {
+	return &Server{in: in, out: out, factory: f, runtimes: map[string]*agent.Runtime{}, cancels: map[string]context.CancelFunc{}}
 }
 
 type request struct {
@@ -73,16 +73,16 @@ func (s *Server) handle(ctx context.Context, r request) {
 		s.mu.Lock()
 		s.seq++
 		id := fmt.Sprintf("kei-%d", s.seq)
-		sess, err := s.factory(id, p.CWD)
+		runtime, err := s.factory(id, p.CWD)
 		if err != nil {
 			s.mu.Unlock()
 			s.fail(r.ID, -32603, err.Error())
 			return
 		}
-		s.sessions[id] = sess
+		s.runtimes[id] = runtime
 		s.mu.Unlock()
 		s.reply(r.ID, map[string]any{"sessionId": id})
-		s.advertiseCommands(id, sess)
+		s.advertiseCommands(id, runtime)
 	case "session/prompt":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -96,16 +96,16 @@ func (s *Server) handle(ctx context.Context, r request) {
 			return
 		}
 		s.mu.Lock()
-		sess := s.sessions[p.SessionID]
+		runtime := s.runtimes[p.SessionID]
 		turnCtx, cancel := context.WithCancel(ctx)
 		s.cancels[p.SessionID] = cancel
 		s.mu.Unlock()
-		if sess == nil {
+		if runtime == nil {
 			s.fail(r.ID, -32602, "unknown session")
 			return
 		}
 		streamed := false
-		sess.OnEvent = func(kind string, payload any) {
+		runtime.OnEvent = func(kind string, payload any) {
 			if kind == "assistant_message_chunk" {
 				data, ok := payload.(map[string]any)
 				if !ok {
@@ -127,7 +127,7 @@ func (s *Server) handle(ctx context.Context, r request) {
 				text += b.Text
 			}
 		}
-		out, err := sess.Prompt(turnCtx, text)
+		out, err := runtime.Prompt(turnCtx, text)
 		s.mu.Lock()
 		delete(s.cancels, p.SessionID)
 		s.mu.Unlock()
@@ -172,12 +172,12 @@ func (s *Server) write(v any) {
 	_, _ = fmt.Fprintf(s.out, "%s\n", b)
 }
 
-func (s *Server) advertiseCommands(sessionID string, sess *agent.Session) {
-	if sess == nil || sess.Commands == nil {
+func (s *Server) advertiseCommands(sessionID string, runtime *agent.Runtime) {
+	if runtime == nil || runtime.Commands == nil {
 		return
 	}
 	available := make([]map[string]any, 0)
-	for _, d := range sess.Commands.List() {
+	for _, d := range runtime.Commands.List() {
 		c := map[string]any{"name": d.QualifiedName, "description": d.Description}
 		if d.InputHint != "" {
 			c["input"] = map[string]any{"hint": d.InputHint}
