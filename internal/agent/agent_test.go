@@ -10,6 +10,7 @@ import (
 	agentcontext "github.com/halqme/kei/internal/context"
 	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/skill"
+	"github.com/halqme/kei/internal/transcript"
 )
 
 type skillProvider struct {
@@ -82,7 +83,21 @@ func TestSessionLoadsDiscoveredSkillThroughMaterializedContext(t *testing.T) {
 	if got != "done" {
 		t.Fatalf("unexpected response: %q", got)
 	}
-	if len(s.Messages) == 0 || s.Messages[0].Role != "user" {
-		t.Fatalf("session transcript contains materialized system context: %+v", s.Messages)
+
+	entries := s.Transcript.Entries()
+	if len(entries) != 4 {
+		t.Fatalf("got %d transcript entries, want 4: %+v", len(entries), entries)
+	}
+	if entries[0].Role != transcript.RoleUser || entries[0].Content != "review this" {
+		t.Fatalf("unexpected first transcript entry: %+v", entries[0])
+	}
+	if entries[1].Role != transcript.RoleAssistant || len(entries[1].ToolCalls) != 1 || entries[1].ToolCalls[0].Name != "load_skill" {
+		t.Fatalf("unexpected assistant tool-call entry: %+v", entries[1])
+	}
+	if entries[2].Role != transcript.RoleTool || entries[2].ToolCallID != "skill-call" {
+		t.Fatalf("unexpected tool result entry: %+v", entries[2])
+	}
+	if entries[3].Role != transcript.RoleAssistant || entries[3].Content != "done" {
+		t.Fatalf("unexpected final assistant entry: %+v", entries[3])
 	}
 }

@@ -36,6 +36,7 @@ internal/extension    extension roots, discovery, shadowing, namespacing
 internal/provider     provider interface and provider transports
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, argv/stdin execution
+internal/transcript   provider-independent logical conversation history
 ```
 
 A new package needs a clear owner-independent responsibility. If the proposed package is primarily one concrete capability such as Git integration, code search, LSP, browser automation, formatting, or sandbox implementation, first try to make it an external process.
@@ -103,6 +104,8 @@ When changing workspace instructions or Agent Skills, cover the affected root pr
 
 When changing context materialization, cover the boundary between runtime instructions and transcript history; request-scoped instruction changes must not rewrite canonical conversation state.
 
+When changing transcript behavior, cover logical entry ordering and tool-call/result linkage without making provider transport structs part of the transcript contract.
+
 When changing tool or slash-command execution, cover the relevant combination of `PATH` lookup, extension-relative executable resolution, workspace cwd, stdin mode, placeholders/defaults, timeout/cancellation, stderr, and non-zero exit behavior.
 
 When changing configuration or provider selection, cover ordering, explicit overrides, generated config location/permissions, existing-file preservation, explicit missing paths, authentication checks, and unsupported provider errors as applicable.
@@ -152,6 +155,7 @@ Preserve these unless the task explicitly changes the contract and the correspon
 - Agent Skills use the standard `SKILL.md` contract; kei does not add a parallel Skill descriptor format.
 - Workspace-specific agent instructions come from root `AGENTS.md`; persistent natural-language instructions are not config fields.
 - Runtime instructions are materialized into provider context and are not canonical transcript entries.
+- Canonical conversation history uses `internal/transcript`; `provider.Message` is a provider request/response representation, not session state.
 - Tool `effects` are policy/UX metadata, not a security boundary.
 - ACP is a frontend adapter, not the internal data model.
 - Credentials stay in the auth store or environment; generated configuration does not contain secrets.
@@ -165,6 +169,7 @@ A change that alters a seam should be treated as cross-cutting even if the diff 
 
 - Descriptor schema changes usually touch descriptor parsing, execution, examples, docs, and tests.
 - Provider stream changes usually touch `internal/provider`, `internal/agent`, and frontend projection.
+- Transcript changes usually touch `internal/transcript`, `internal/context`, `internal/agent`, and session docs.
 - New control decisions usually touch the control protocol, context materialization, session behavior, approval behavior, and docs.
 - Workspace semantics usually touch discovery, context, process cwd, ACP session creation, CLI wiring, and tests.
 - Naming changes usually touch extension discovery, registries, provider function-name conversion, CLI inspection, ACP command advertisement, docs, and examples.

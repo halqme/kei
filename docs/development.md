@@ -17,6 +17,7 @@ internal/extension    extension discovery and namespacing
 internal/provider     provider interface and transports
 internal/skill        Agent Skills discovery and on-demand loading
 internal/tool         tool descriptors, registry, and execution
+internal/transcript   provider-independent logical conversation history
 examples               example configuration and extension declarations
 docs                   public design and reference documentation
 ```
@@ -44,6 +45,7 @@ go build -o ./build/kei ./cmd/kei
 Use focused tests while iterating, for example:
 
 ```sh
+go test ./internal/transcript
 go test ./internal/context
 go test ./internal/extension
 go test ./internal/tool
@@ -67,6 +69,8 @@ For extension discovery, test roots, precedence, whole-extension shadowing, stab
 For Agent Skills, test the project/user root precedence, required `SKILL.md` metadata contract, progressive-disclosure catalog, and confinement of referenced resource reads to the Skill root.
 
 For workspace instructions and context materialization, test root `AGENTS.md` composition, the absent-file case, and the boundary that keeps runtime instructions out of the transcript. Nested instruction scoping is not part of the current contract.
+
+For transcripts, test logical entry ordering and tool-call/result linkage. Keep provider serialization details out of `internal/transcript`; the context layer owns rendering logical entries into the current provider request shape.
 
 For tools, test schema defaults, required/optional placeholders, array expansion, stdin JSON, timeout behavior, PATH lookup, extension-relative executables, workspace cwd, stderr, and non-zero exits as relevant to the change.
 
@@ -111,6 +115,18 @@ provider transport
 
 Do not infer streaming guarantees from one provider implementation. The provider interface must represent any guarantee relied upon by agent/frontends.
 
+### Transcript changes
+
+```text
+provider result
+  -> internal/agent
+  -> internal/transcript
+  -> internal/context materialization
+  -> provider request
+```
+
+`internal/transcript` owns logical conversation facts. `internal/context` owns the current conversion back into `provider.Message`; do not move provider request fields into transcript state merely to avoid that conversion.
+
 ### Workspace changes
 
 Workspace/cwd behavior crosses extension search roots, root `AGENTS.md`, project Skill discovery, context construction, process working directories, CLI session creation, and ACP session creation. Treat changes there as a single contract and test all affected paths.
@@ -124,7 +140,7 @@ Tool and command names appear in extension loading, registries, model-facing con
 Update docs with behavior changes, not as a cleanup after the code has already diverged.
 
 - `docs/configuration.md` owns config/auth-facing contracts.
-- `docs/session.md` owns orchestration, context materialization, workspace instructions, and Agent Skills semantics.
+- `docs/session.md` owns orchestration, transcript/context boundaries, workspace instructions, and Agent Skills semantics.
 - `docs/extension/*` owns declarations/discovery/execution contracts.
 - `docs/acp.md` owns ACP behavior.
 - `docs/architecture.md` owns rationale and core-versus-external boundaries.
