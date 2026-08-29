@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/halqme/kei/internal/provider"
 	"github.com/halqme/kei/internal/transcript"
 )
 
@@ -17,9 +16,10 @@ type Builder struct {
 	baseInstructions string
 }
 
-type Materialized struct {
-	Messages []provider.Message
-	Tools    []map[string]any
+type Request struct {
+	Instructions string
+	Tail         []transcript.Entry
+	Tools        []map[string]any
 }
 
 func New(baseInstructions string) *Builder {
@@ -53,36 +53,23 @@ func (b *Builder) BaseInstructions() string {
 	return b.baseInstructions
 }
 
-func (b *Builder) Materialize(tail []transcript.Entry, tools []map[string]any, instructions string) Materialized {
+func (b *Builder) Materialize(tail []transcript.Entry, tools []map[string]any, instructions string) Request {
 	if instructions == "" {
 		instructions = b.BaseInstructions()
 	}
 
-	messages := make([]provider.Message, 0, len(tail)+1)
-	if instructions != "" {
-		messages = append(messages, provider.Message{Role: "system", Content: instructions})
+	return Request{
+		Instructions: instructions,
+		Tail:         cloneTail(tail),
+		Tools:        append([]map[string]any(nil), tools...),
 	}
-	for _, entry := range tail {
-		message := provider.Message{
-			Role:       string(entry.Role),
-			Content:    entry.Content,
-			ToolCallID: entry.ToolCallID,
-		}
-		for _, call := range entry.ToolCalls {
-			message.ToolCalls = append(message.ToolCalls, provider.ToolCall{
-				ID:   call.ID,
-				Type: "function",
-				Function: provider.FunctionCall{
-					Name:      call.Name,
-					Arguments: call.Arguments,
-				},
-			})
-		}
-		messages = append(messages, message)
-	}
+}
 
-	return Materialized{
-		Messages: messages,
-		Tools:    append([]map[string]any(nil), tools...),
+func cloneTail(tail []transcript.Entry) []transcript.Entry {
+	out := make([]transcript.Entry, len(tail))
+	for i, entry := range tail {
+		out[i] = entry
+		out[i].ToolCalls = append([]transcript.ToolCall(nil), entry.ToolCalls...)
 	}
+	return out
 }

@@ -38,39 +38,31 @@ func TestNewForWorkspaceAllowsMissingAgentsFile(t *testing.T) {
 	}
 }
 
-func TestMaterializeRendersTranscriptWithoutMutatingIt(t *testing.T) {
-	tail := []transcript.Entry{{Role: transcript.RoleUser, Content: "hello"}}
-	m := New("base").Materialize(tail, []map[string]any{{"type": "function"}}, "")
-
-	if len(m.Messages) != 2 || m.Messages[0].Role != "system" || m.Messages[0].Content != "base" || m.Messages[1].Role != "user" {
-		t.Fatalf("unexpected materialized messages: %+v", m.Messages)
-	}
-	if len(tail) != 1 || tail[0].Role != transcript.RoleUser {
-		t.Fatalf("materialization mutated transcript tail: %+v", tail)
-	}
-	if len(m.Tools) != 1 {
-		t.Fatalf("unexpected materialized tools: %+v", m.Tools)
-	}
-}
-
-func TestMaterializeRendersLogicalToolCallsForProvider(t *testing.T) {
+func TestMaterializePreservesRequestRegionsWithoutMutatingTail(t *testing.T) {
 	tail := []transcript.Entry{{
-		Role:    transcript.RoleAssistant,
-		Content: "checking",
+		Role: transcript.RoleAssistant,
 		ToolCalls: []transcript.ToolCall{{
 			ID:        "call-1",
 			Name:      "search",
 			Arguments: `{"query":"hello"}`,
 		}},
 	}}
+	request := New("base").Materialize(tail, []map[string]any{{"type": "function"}}, "")
 
-	m := New("").Materialize(tail, nil, "")
-	if len(m.Messages) != 1 || len(m.Messages[0].ToolCalls) != 1 {
-		t.Fatalf("unexpected materialized tool call: %+v", m.Messages)
+	if request.Instructions != "base" {
+		t.Fatalf("unexpected instructions: %q", request.Instructions)
 	}
-	call := m.Messages[0].ToolCalls[0]
-	if call.ID != "call-1" || call.Type != "function" || call.Function.Name != "search" || call.Function.Arguments != `{"query":"hello"}` {
-		t.Fatalf("unexpected provider tool call: %+v", call)
+	if len(request.Tail) != 1 || request.Tail[0].Role != transcript.RoleAssistant || len(request.Tail[0].ToolCalls) != 1 {
+		t.Fatalf("unexpected request tail: %+v", request.Tail)
+	}
+	if len(request.Tools) != 1 {
+		t.Fatalf("unexpected request tools: %+v", request.Tools)
+	}
+
+	request.Tail[0].Role = transcript.RoleUser
+	request.Tail[0].ToolCalls[0].Name = "changed"
+	if tail[0].Role != transcript.RoleAssistant || tail[0].ToolCalls[0].Name != "search" {
+		t.Fatalf("materialization exposed transcript slices: %+v", tail)
 	}
 }
 
@@ -79,11 +71,11 @@ func TestMaterializeInstructionReplacementIsRequestScoped(t *testing.T) {
 	tail := []transcript.Entry{{Role: transcript.RoleUser, Content: "hello"}}
 
 	replaced := b.Materialize(tail, nil, "temporary")
-	if replaced.Messages[0].Content != "temporary" {
-		t.Fatalf("replacement was not applied: %+v", replaced.Messages)
+	if replaced.Instructions != "temporary" {
+		t.Fatalf("replacement was not applied: %+v", replaced)
 	}
 	fresh := b.Materialize(tail, nil, "")
-	if fresh.Messages[0].Content != "base" {
-		t.Fatalf("replacement leaked into later materialization: %+v", fresh.Messages)
+	if fresh.Instructions != "base" {
+		t.Fatalf("replacement leaked into later materialization: %+v", fresh)
 	}
 }
